@@ -15,6 +15,7 @@ import { format } from 'date-fns';
 const CATEGORIES = [
   { value: 't_slips', label: 'T-Slips' },
   { value: 'financial_statements', label: 'Financial Statements' },
+  { value: 'bank_statements', label: 'Bank Statements' },
   { value: 'receipts', label: 'Receipts' },
   { value: 'correspondence', label: 'Correspondence' },
   { value: 'returns', label: 'Returns' },
@@ -25,6 +26,7 @@ const CATEGORIES = [
 const categoryColors = {
   t_slips: 'bg-blue-100 text-blue-700',
   financial_statements: 'bg-green-100 text-green-700',
+  bank_statements: 'bg-cyan-100 text-cyan-700',
   receipts: 'bg-amber-100 text-amber-700',
   correspondence: 'bg-purple-100 text-purple-700',
   returns: 'bg-emerald-100 text-emerald-700',
@@ -89,7 +91,7 @@ export default function Documents() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold">Documents</h1>
-          <p className="text-sm text-muted-foreground mt-1">Upload and organize client documents</p>
+          <p className="text-sm text-muted-foreground mt-1">Upload and organize client documents, bank statements & more</p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="w-4 h-4 mr-2" /> Upload Document
@@ -163,12 +165,15 @@ export default function Documents() {
             <div>
               <Label>File</Label>
               <div className="mt-1 border-2 border-dashed border-border rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer">
-                <input type="file" className="hidden" id="file-upload" onChange={handleFileUpload} />
+                <input type="file" className="hidden" id="file-upload" onChange={handleFileUpload} accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls,.doc,.docx" />
                 <label htmlFor="file-upload" className="cursor-pointer">
                   <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
                   <p className="text-sm text-muted-foreground">
-                    {uploading ? 'Uploading...' : form.file_url ? 'File uploaded ✓' : 'Click to upload'}
+                    {uploading ? 'Uploading...' : form.file_url ? '✓ File uploaded' : 'Click to upload'}
                   </p>
+                  {!form.file_url && !uploading && (
+                    <p className="text-xs text-muted-foreground/60 mt-1">PDF, CSV, XLS, Word, Images</p>
+                  )}
                 </label>
               </div>
             </div>

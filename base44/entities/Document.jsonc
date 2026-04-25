@@ -19,6 +19,7 @@
       "enum": [
         "t_slips",
         "financial_statements",
+        "bank_statements",
         "receipts",
         "correspondence",
         "returns",

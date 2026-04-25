@@ -28,11 +28,11 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 h-[72px] border-b border-sidebar-border">
         <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center flex-shrink-0">
-          <span className="text-sidebar-primary-foreground font-bold text-sm">CPA</span>
+          <span className="text-sidebar-primary-foreground font-bold text-sm">SOC</span>
         </div>
         {!collapsed && (
           <div className="overflow-hidden">
-            <h1 className="font-display text-lg font-semibold text-sidebar-foreground leading-tight">Maple Tax</h1>
+            <h1 className="font-display text-lg font-semibold text-sidebar-foreground leading-tight">SOC Ai</h1>
             <p className="text-[11px] text-sidebar-foreground/50 tracking-wider uppercase">CPA Practice</p>
           </div>
         )}
