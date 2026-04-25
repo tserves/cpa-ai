@@ -5,7 +5,13 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-// Add page imports here
+import AppLayout from '@/components/layout/AppLayout';
+import Dashboard from '@/pages/Dashboard';
+import Clients from '@/pages/Clients';
+import TaxFilings from '@/pages/TaxFilings';
+import Tasks from '@/pages/Tasks';
+import Documents from '@/pages/Documents';
+import AIAdvisor from '@/pages/AIAdvisor';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -33,7 +39,14 @@ const AuthenticatedApp = () => {
   // Render the main app
   return (
     <Routes>
-      {/* Add your page Route elements here */}
+      <Route element={<AppLayout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/clients" element={<Clients />} />
+        <Route path="/filings" element={<TaxFilings />} />
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/documents" element={<Documents />} />
+        <Route path="/ai-advisor" element={<AIAdvisor />} />
+      </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );

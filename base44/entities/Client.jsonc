@@ -1,0 +1,87 @@
+{
+  "name": "Client",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Client full name or business name"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "individual",
+        "corporation",
+        "partnership",
+        "sole_proprietorship",
+        "trust",
+        "non_profit"
+      ],
+      "description": "Type of client"
+    },
+    "email": {
+      "type": "string",
+      "description": "Primary email"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Phone number"
+    },
+    "address": {
+      "type": "string",
+      "description": "Full address"
+    },
+    "province": {
+      "type": "string",
+      "enum": [
+        "AB",
+        "BC",
+        "MB",
+        "NB",
+        "NL",
+        "NS",
+        "NT",
+        "NU",
+        "ON",
+        "PE",
+        "QC",
+        "SK",
+        "YT"
+      ],
+      "description": "Province or territory"
+    },
+    "sin_or_bn": {
+      "type": "string",
+      "description": "SIN (individual) or BN (business)"
+    },
+    "fiscal_year_end": {
+      "type": "string",
+      "description": "Fiscal year end month"
+    },
+    "gst_hst_registered": {
+      "type": "boolean",
+      "default": false,
+      "description": "Is the client registered for GST/HST?"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "prospect"
+      ],
+      "default": "active"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Internal notes about the client"
+    },
+    "annual_revenue": {
+      "type": "number",
+      "description": "Estimated annual revenue"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "name": "Task",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Task title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Task description"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Assigned team member email"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Task due date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "todo",
+        "in_progress",
+        "completed"
+      ],
+      "default": "todo"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "default": "medium"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "tax_prep",
+        "bookkeeping",
+        "audit",
+        "advisory",
+        "admin",
+        "client_meeting",
+        "other"
+      ],
+      "default": "tax_prep"
+    }
+  },
+  "required": [
+    "title"
+  ]
+}

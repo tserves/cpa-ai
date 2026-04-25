@@ -1,0 +1,46 @@
+{
+  "name": "Document",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Document name"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "t_slips",
+        "financial_statements",
+        "receipts",
+        "correspondence",
+        "returns",
+        "notices",
+        "other"
+      ],
+      "default": "other"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "URL of the uploaded file"
+    },
+    "tax_year": {
+      "type": "string",
+      "description": "Related tax year"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Document notes"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

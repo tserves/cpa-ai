@@ -1,0 +1,79 @@
+{
+  "name": "TaxFiling",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "description": "Reference to the client"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "filing_type": {
+      "type": "string",
+      "enum": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T4A",
+        "T5",
+        "GST/HST",
+        "T2125",
+        "NR4",
+        "T5013",
+        "RC59"
+      ],
+      "description": "Type of Canadian tax filing"
+    },
+    "tax_year": {
+      "type": "string",
+      "description": "Tax year (e.g., 2025)"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Filing deadline"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "under_review",
+        "filed",
+        "assessed",
+        "reassessed"
+      ],
+      "default": "not_started"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Team member assigned"
+    },
+    "amount_owing": {
+      "type": "number",
+      "description": "Tax amount owing or refund (negative)"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notes about the filing"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "default": "medium"
+    }
+  },
+  "required": [
+    "client_id",
+    "filing_type",
+    "tax_year"
+  ]
+}
