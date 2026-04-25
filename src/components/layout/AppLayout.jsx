@@ -6,12 +6,13 @@ import { Button } from '@/components/ui/button';
 
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
       {/* Desktop Sidebar */}
       <div className="hidden lg:block">
-        <Sidebar />
+        <Sidebar collapsed={collapsed} onCollapsedChange={setCollapsed} />
       </div>
 
       {/* Mobile Header */}
@@ -32,13 +33,17 @@ export default function AppLayout() {
         <div className="lg:hidden fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
           <div className="relative w-[260px] h-full">
-            <Sidebar />
+            <Sidebar collapsed={false} onCollapsedChange={() => {}} />
           </div>
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="lg:ml-[260px] min-h-screen pt-14 lg:pt-0">
+      {/* Main Content — margin tracks sidebar width */}
+      <main
+        className="min-h-screen pt-14 lg:pt-0 transition-all duration-300"
+        style={{ marginLeft: `${collapsed ? 72 : 260}px` }}
+      >
+        <style>{`@media (max-width: 1023px) { main { margin-left: 0 !important; } }`}</style>
         <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto">
           <Outlet />
         </div>

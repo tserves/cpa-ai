@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, FileText, CheckSquare, FolderOpen, 
@@ -17,8 +17,7 @@ const navItems = [
   { path: '/ai-advisor', label: 'AI Tax Advisor', icon: Bot },
 ];
 
-export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
+export default function Sidebar({ collapsed = false, onCollapsedChange }) {
   const location = useLocation();
 
   return (
@@ -71,7 +70,7 @@ export default function Sidebar() {
           {!collapsed && <span>Sign Out</span>}
         </button>
         <button
-          onClick={() => setCollapsed(!collapsed)}
+          onClick={() => onCollapsedChange && onCollapsedChange(!collapsed)}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground/40 hover:text-sidebar-foreground w-full transition-all"
         >
           {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}

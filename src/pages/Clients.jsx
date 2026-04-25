@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, MapPin } from 'lucide-react';
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, MapPin, Users } from 'lucide-react';
 import ClientFormDialog from '@/components/clients/ClientFormDialog';
 
 const statusColors = {
@@ -26,6 +26,7 @@ const typeLabels = {
 
 export default function Clients() {
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const queryClient = useQueryClient();
@@ -58,10 +59,12 @@ export default function Clients() {
     }
   };
 
-  const filtered = clients.filter(c =>
-    c.name?.toLowerCase().includes(search.toLowerCase()) ||
-    c.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = clients.filter(c => {
+    const matchesSearch = c.name?.toLowerCase().includes(search.toLowerCase()) ||
+      c.email?.toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div className="space-y-6">
@@ -75,19 +78,37 @@ export default function Clients() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search clients..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search clients..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <div className="flex gap-1 p-1 bg-muted rounded-lg">
+          {['all', 'active', 'inactive', 'prospect'].map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1 rounded-md text-xs font-medium capitalize transition-all ${statusFilter === s ? 'bg-card shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {s === 'all' ? 'All' : s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-12">
           <div className="w-8 h-8 border-4 border-border border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-muted-foreground">
+          <Users className="w-10 h-10 mx-auto mb-3 opacity-20" />
+          <p className="text-sm">No clients match your search</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

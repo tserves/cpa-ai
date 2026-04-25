@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, Calendar } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { Plus, MoreHorizontal, Pencil, Trash2, Calendar, AlertCircle } from 'lucide-react';
+import { format, parseISO, isPast, startOfDay } from 'date-fns';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
@@ -41,6 +41,7 @@ export default function Tasks() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyTask);
   const [filterStatus, setFilterStatus] = useState('all');
+  const [filterPriority, setFilterPriority] = useState('all');
   const queryClient = useQueryClient();
 
   const { data: tasks = [], isLoading } = useQuery({
@@ -98,7 +99,14 @@ export default function Tasks() {
     setForm({ ...form, client_id: clientId, client_name: client?.name || '' });
   };
 
-  const filtered = tasks.filter(t => filterStatus === 'all' || t.status === filterStatus);
+  const filtered = tasks.filter(t => {
+    if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+    if (filterPriority !== 'all' && t.priority !== filterPriority) return false;
+    return true;
+  });
+
+  const isOverdue = (task) =>
+    task.due_date && task.status !== 'completed' && isPast(startOfDay(parseISO(task.due_date)));
 
   return (
     <div className="space-y-6">
@@ -112,15 +120,27 @@ export default function Tasks() {
         </Button>
       </div>
 
-      <Select value={filterStatus} onValueChange={setFilterStatus}>
-        <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Tasks</SelectItem>
-          <SelectItem value="todo">To Do</SelectItem>
-          <SelectItem value="in_progress">In Progress</SelectItem>
-          <SelectItem value="completed">Completed</SelectItem>
-        </SelectContent>
-      </Select>
+      <div className="flex flex-wrap gap-3">
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Tasks</SelectItem>
+            <SelectItem value="todo">To Do</SelectItem>
+            <SelectItem value="in_progress">In Progress</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterPriority} onValueChange={setFilterPriority}>
+          <SelectTrigger className="w-40"><SelectValue placeholder="Priority" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Priorities</SelectItem>
+            <SelectItem value="urgent">Urgent</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="low">Low</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       {isLoading ? (
         <div className="flex justify-center py-12">
@@ -132,7 +152,7 @@ export default function Tasks() {
             <p className="text-center text-muted-foreground py-12">No tasks found</p>
           )}
           {filtered.map(task => (
-            <Card key={task.id} className="p-4 flex items-start gap-3 hover:shadow-sm transition-shadow">
+            <Card key={task.id} className={`p-4 flex items-start gap-3 hover:shadow-sm transition-shadow ${isOverdue(task) ? 'border-destructive/40 bg-destructive/5' : ''}`}>
               <Checkbox
                 checked={task.status === 'completed'}
                 onCheckedChange={() => toggleComplete(task)}
@@ -158,9 +178,10 @@ export default function Tasks() {
                     </Badge>
                   )}
                   {task.due_date && (
-                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
+                    <span className={`text-[10px] flex items-center gap-1 ${isOverdue(task) ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
+                      {isOverdue(task) ? <AlertCircle className="w-3 h-3" /> : <Calendar className="w-3 h-3" />}
                       {format(parseISO(task.due_date), 'MMM d')}
+                      {isOverdue(task) && ' overdue'}
                     </span>
                   )}
                 </div>

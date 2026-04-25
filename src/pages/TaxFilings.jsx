@@ -7,8 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card } from '@/components/ui/card';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { Plus, MoreHorizontal, Pencil, Trash2, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { format, parseISO, isPast, startOfDay } from 'date-fns';
 import FilingFormDialog from '@/components/filings/FilingFormDialog';
 
 const statusStyles = {
@@ -32,6 +33,7 @@ export default function TaxFilings() {
   const [editing, setEditing] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [search, setSearch] = useState('');
   const queryClient = useQueryClient();
 
   const { data: filings = [], isLoading } = useQuery({
@@ -70,8 +72,12 @@ export default function TaxFilings() {
   const filtered = filings.filter(f => {
     if (filterStatus !== 'all' && f.status !== filterStatus) return false;
     if (filterType !== 'all' && f.filing_type !== filterType) return false;
+    if (search && !f.client_name?.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const isDueSoon = (f) =>
+    f.due_date && f.status !== 'filed' && f.status !== 'assessed' && isPast(startOfDay(parseISO(f.due_date)));
 
   return (
     <div className="space-y-6">
@@ -85,7 +91,12 @@ export default function TaxFilings() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative max-w-xs w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input placeholder="Search client..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        <div className="flex flex-wrap gap-3">
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
@@ -106,6 +117,7 @@ export default function TaxFilings() {
             ))}
           </SelectContent>
         </Select>
+        </div>
       </div>
 
       <Card className="overflow-hidden">
@@ -133,7 +145,10 @@ export default function TaxFilings() {
                   <TableCell className="font-medium text-sm">{filing.client_name || '—'}</TableCell>
                   <TableCell><Badge variant="outline" className="text-xs">{filing.filing_type}</Badge></TableCell>
                   <TableCell className="text-sm">{filing.tax_year}</TableCell>
-                  <TableCell className="text-sm">{filing.due_date ? format(parseISO(filing.due_date), 'MMM d, yyyy') : '—'}</TableCell>
+                  <TableCell className={`text-sm ${isDueSoon(filing) ? 'text-destructive font-medium' : ''}`}>
+                    {filing.due_date ? format(parseISO(filing.due_date), 'MMM d, yyyy') : '—'}
+                    {isDueSoon(filing) && <span className="ml-1 text-[10px]">overdue</span>}
+                  </TableCell>
                   <TableCell>
                     <Badge className={`${statusStyles[filing.status] || statusStyles.not_started} text-[10px] border-0`}>
                       {(filing.status || 'not_started').replace(/_/g, ' ')}
