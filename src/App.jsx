@@ -12,6 +12,7 @@ import TaxFilings from '@/pages/TaxFilings';
 import Tasks from '@/pages/Tasks';
 import Documents from '@/pages/Documents';
 import AIAdvisor from '@/pages/AIAdvisor';
+import Appointments from '@/pages/Appointments';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -44,6 +45,7 @@ const AuthenticatedApp = () => {
         <Route path="/clients" element={<Clients />} />
         <Route path="/filings" element={<TaxFilings />} />
         <Route path="/tasks" element={<Tasks />} />
+        <Route path="/appointments" element={<Appointments />} />
         <Route path="/documents" element={<Documents />} />
         <Route path="/ai-advisor" element={<AIAdvisor />} />
       </Route>

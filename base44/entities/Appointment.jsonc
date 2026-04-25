@@ -1,0 +1,70 @@
+{
+  "name": "Appointment",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Appointment title or subject"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Appointment date"
+    },
+    "time": {
+      "type": "string",
+      "description": "Appointment time (e.g. 14:00)"
+    },
+    "duration_minutes": {
+      "type": "number",
+      "description": "Duration in minutes",
+      "default": 60
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "consultation",
+        "review",
+        "planning",
+        "audit",
+        "other"
+      ],
+      "default": "consultation"
+    },
+    "location": {
+      "type": "string",
+      "description": "Location or video call link"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Appointment notes"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "scheduled",
+        "completed",
+        "cancelled",
+        "no_show"
+      ],
+      "default": "scheduled"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Team member handling the appointment"
+    }
+  },
+  "required": [
+    "title",
+    "date",
+    "time"
+  ]
+}
