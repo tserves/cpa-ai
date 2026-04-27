@@ -15,6 +15,8 @@ import AIAdvisor from '@/pages/AIAdvisor';
 import Appointments from '@/pages/Appointments';
 import QuickBooksImport from '@/pages/QuickBooksImport';
 import StaffManagement from '@/pages/StaffManagement';
+import TimeTracker from '@/pages/TimeTracker';
+import ClientNotes from '@/pages/ClientNotes';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -52,6 +54,8 @@ const AuthenticatedApp = () => {
         <Route path="/ai-advisor" element={<AIAdvisor />} />
         <Route path="/quickbooks-import" element={<QuickBooksImport />} />
         <Route path="/staff" element={<StaffManagement />} />
+        <Route path="/time-tracker" element={<TimeTracker />} />
+        <Route path="/client-notes" element={<ClientNotes />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>

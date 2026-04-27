@@ -1,0 +1,61 @@
+{
+  "name": "TimeEntry",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "description": {
+      "type": "string",
+      "description": "Work description"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "tax_prep",
+        "bookkeeping",
+        "audit",
+        "advisory",
+        "client_meeting",
+        "admin",
+        "other"
+      ],
+      "default": "tax_prep"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "hours": {
+      "type": "number",
+      "description": "Hours spent"
+    },
+    "minutes": {
+      "type": "number",
+      "description": "Additional minutes",
+      "default": 0
+    },
+    "billable": {
+      "type": "boolean",
+      "default": true
+    },
+    "rate_per_hour": {
+      "type": "number",
+      "description": "Billing rate per hour"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Staff member email"
+    }
+  },
+  "required": [
+    "client_id",
+    "date",
+    "hours"
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "name": "ClientNote",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "title": {
+      "type": "string",
+      "description": "Note title or subject"
+    },
+    "content": {
+      "type": "string",
+      "description": "Full note content"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "call",
+        "email",
+        "meeting",
+        "internal",
+        "cra_correspondence",
+        "other"
+      ],
+      "default": "internal"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "follow_up_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Follow-up reminder date"
+    },
+    "send_reminder": {
+      "type": "boolean",
+      "default": false
+    },
+    "reminder_sent": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "client_id",
+    "title",
+    "content"
+  ]
+}
