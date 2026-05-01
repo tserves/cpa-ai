@@ -1,21 +1,21 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Upload, Brain, AlertTriangle, CheckCircle2, Clock, FileText,
-  ChevronDown, ChevronUp, Search, BarChart2, ArrowRight, RefreshCw, Eye
+  ChevronDown, ChevronUp, Search, ArrowRight, RefreshCw, Eye, Trash2, X
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { format } from 'date-fns';
 
 const DOC_TYPES = [
   { value: 'bank_statement', label: 'Bank Statement' },
@@ -27,11 +27,11 @@ const DOC_TYPES = [
 ];
 
 const statusConfig = {
-  pending:    { label: 'Pending',       color: 'bg-gray-100 text-gray-600',   icon: Clock },
-  processing: { label: 'Processing…',   color: 'bg-blue-100 text-blue-700',   icon: RefreshCw },
-  completed:  { label: 'Completed',     color: 'bg-green-100 text-green-700', icon: CheckCircle2 },
-  needs_review: { label: 'Needs Review', color: 'bg-amber-100 text-amber-700', icon: AlertTriangle },
-  failed:     { label: 'Failed',        color: 'bg-red-100 text-red-700',     icon: AlertTriangle },
+  pending:      { label: 'Pending',       color: 'bg-gray-100 text-gray-600',   icon: Clock },
+  processing:   { label: 'Processing…',   color: 'bg-blue-100 text-blue-700',   icon: RefreshCw },
+  completed:    { label: 'Completed',     color: 'bg-green-100 text-green-700', icon: CheckCircle2 },
+  needs_review: { label: 'Needs Review',  color: 'bg-amber-100 text-amber-700', icon: AlertTriangle },
+  failed:       { label: 'Failed',        color: 'bg-red-100 text-red-700',     icon: AlertTriangle },
 };
 
 const severityColor = {
@@ -45,7 +45,7 @@ function AnomalyBadge({ severity }) {
   return <Badge className={`${colors[severity]} border-0 text-xs capitalize`}>{severity}</Badge>;
 }
 
-function ProcessedDocCard({ doc, onReview }) {
+function ProcessedDocCard({ doc, onReview, onDelete, selected, onSelect }) {
   const [expanded, setExpanded] = useState(false);
   const sc = statusConfig[doc.status] || statusConfig.pending;
   const StatusIcon = sc.icon;
@@ -55,10 +55,11 @@ function ProcessedDocCard({ doc, onReview }) {
   const entries = extracted?.accounting_entries || [];
 
   return (
-    <Card className="overflow-hidden">
+    <Card className={`overflow-hidden transition-all ${selected ? 'ring-2 ring-primary' : ''}`}>
       <div className="p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
+            <Checkbox checked={selected} onCheckedChange={onSelect} className="mt-1 flex-shrink-0" />
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
               <FileText className="w-5 h-5 text-primary" />
             </div>
@@ -91,6 +92,9 @@ function ProcessedDocCard({ doc, onReview }) {
                 <Eye className="w-3.5 h-3.5 mr-1" /> Review
               </Button>
             )}
+            <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete([doc.id])}>
+              <Trash2 className="w-4 h-4" />
+            </Button>
             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setExpanded(e => !e)}>
               {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </Button>
@@ -194,16 +198,44 @@ function ProcessedDocCard({ doc, onReview }) {
   );
 }
 
+// ─── Bulk upload queue item ───────────────────────────────────────────────────
+function BulkFileRow({ item, onRemove, onTypeChange }) {
+  return (
+    <div className="flex items-center gap-3 py-2 border-b last:border-0">
+      <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+      <span className="text-xs flex-1 truncate">{item.file.name}</span>
+      <Select value={item.document_type} onValueChange={v => onTypeChange(item.id, v)}>
+        <SelectTrigger className="h-7 text-xs w-36"><SelectValue /></SelectTrigger>
+        <SelectContent>{DOC_TYPES.map(t => <SelectItem key={t.value} value={t.value} className="text-xs">{t.label}</SelectItem>)}</SelectContent>
+      </Select>
+      <span className={`text-[10px] font-medium flex-shrink-0 ${
+        item.status === 'done' ? 'text-green-600' :
+        item.status === 'error' ? 'text-red-600' :
+        item.status === 'processing' ? 'text-blue-600' : 'text-muted-foreground'
+      }`}>
+        {item.status === 'done' ? '✓ Done' : item.status === 'error' ? '✗ Error' : item.status === 'processing' ? 'Processing…' : 'Queued'}
+      </span>
+      {item.status === 'queued' && (
+        <button onClick={() => onRemove(item.id)} className="text-muted-foreground hover:text-destructive">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function AIDocumentPipeline() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewDoc, setReviewDoc] = useState(null);
-  const [form, setForm] = useState({ document_name: '', client_id: '', client_name: '', document_type: 'bank_statement' });
-  const [uploading, setUploading] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [fileUrl, setFileUrl] = useState('');
+  const [sharedClient, setSharedClient] = useState('');
+  const [bulkFiles, setBulkFiles] = useState([]); // [{ id, file, document_type, status }]
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
   const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -218,72 +250,92 @@ export default function AIDocumentPipeline() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['processed-docs'] }),
   });
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setFileUrl(file_url);
-    setForm(f => ({ ...f, document_name: f.document_name || file.name }));
-    setUploading(false);
+  // ─── File picker (multiple) ─────────────────────────────────────────────────
+  const handleFilePick = (e) => {
+    const files = Array.from(e.target.files);
+    const newItems = files.map(f => ({
+      id: `${f.name}-${Date.now()}-${Math.random()}`,
+      file: f,
+      document_type: 'other',
+      status: 'queued',
+    }));
+    setBulkFiles(prev => [...prev, ...newItems]);
+    e.target.value = '';
   };
 
-  const handleClientChange = (id) => {
-    const client = clients.find(c => c.id === id);
-    setForm(f => ({ ...f, client_id: id, client_name: client?.name || '' }));
+  const removeFile = (id) => setBulkFiles(prev => prev.filter(f => f.id !== id));
+  const updateType = (id, type) => setBulkFiles(prev => prev.map(f => f.id === id ? { ...f, document_type: type } : f));
+
+  // ─── Process all queued files ───────────────────────────────────────────────
+  const handleProcessAll = async () => {
+    const queued = bulkFiles.filter(f => f.status === 'queued');
+    if (!queued.length) return;
+    setBulkRunning(true);
+
+    const client = clients.find(c => c.id === sharedClient);
+    const clientName = client?.name || '';
+
+    for (const item of queued) {
+      setBulkFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: 'processing' } : f));
+
+      const { file_url } = await base44.integrations.Core.UploadFile({ file: item.file });
+
+      const record = await base44.entities.ProcessedDocument.create({
+        document_name: item.file.name,
+        client_id: sharedClient || '',
+        client_name: clientName,
+        document_type: item.document_type,
+        file_url,
+        status: 'processing',
+      });
+      queryClient.invalidateQueries({ queryKey: ['processed-docs'] });
+
+      const result = await base44.functions.invoke('processFinancialDocument', {
+        file_url: record.file_url,
+        document_type: record.document_type,
+        client_name: record.client_name,
+        document_name: record.document_name,
+      });
+
+      await base44.entities.ProcessedDocument.update(record.id, { ...result.data });
+      queryClient.invalidateQueries({ queryKey: ['processed-docs'] });
+
+      setBulkFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: result.data ? 'done' : 'error' } : f));
+    }
+
+    setBulkRunning(false);
+    toast({ title: `✅ Bulk processing complete`, description: `${queued.length} document(s) processed` });
   };
 
-  const handleProcess = async () => {
-    if (!fileUrl) return;
-    setProcessing(true);
-
-    // Create pending record
-    const record = await base44.entities.ProcessedDocument.create({
-      document_name: form.document_name,
-      client_id: form.client_id,
-      client_name: form.client_name,
-      document_type: form.document_type,
-      file_url: fileUrl,
-      status: 'processing',
-    });
-
-    setUploadOpen(false);
-    setForm({ document_name: '', client_id: '', client_name: '', document_type: 'bank_statement' });
-    setFileUrl('');
+  // ─── Delete ─────────────────────────────────────────────────────────────────
+  const handleDelete = async (ids) => {
+    setDeleting(true);
+    await Promise.all(ids.map(id => base44.entities.ProcessedDocument.delete(id)));
+    setSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
     queryClient.invalidateQueries({ queryKey: ['processed-docs'] });
-
-    toast({ title: 'Processing started', description: 'AI is analyzing your document…' });
-
-    const result = await base44.functions.invoke('processFinancialDocument', {
-      file_url: record.file_url,
-      document_type: record.document_type,
-      client_name: record.client_name,
-      document_name: record.document_name,
-    });
-
-    await base44.entities.ProcessedDocument.update(record.id, {
-      ...result.data,
-    });
-
-    queryClient.invalidateQueries({ queryKey: ['processed-docs'] });
-    setProcessing(false);
-
-    toast({
-      title: result.data?.status === 'needs_review' ? '⚠️ Document needs review' : '✅ Processing complete',
-      description: result.data?.anomaly_count > 0
-        ? `${result.data.anomaly_count} anomalie(s) flagged for review`
-        : 'All data extracted successfully',
-    });
+    setDeleting(false);
+    toast({ title: `Deleted ${ids.length} document${ids.length > 1 ? 's' : ''}` });
   };
 
+  const handleDeleteSelected = () => handleDelete([...selected]);
+
+  // ─── Select helpers ─────────────────────────────────────────────────────────
+  const toggleSelect = (id) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSelected = filtered => filtered.length > 0 && filtered.every(d => selected.has(d.id));
+  const toggleAll = (filtered) => {
+    if (allSelected(filtered)) setSelected(new Set());
+    else setSelected(new Set(filtered.map(d => d.id)));
+  };
+
+  // ─── Review ─────────────────────────────────────────────────────────────────
   const handleReview = (doc) => { setReviewDoc({ ...doc, reviewer_notes: doc.reviewer_notes || '' }); setReviewOpen(true); };
-
   const handleMarkReviewed = async () => {
     await updateMut.mutateAsync({ id: reviewDoc.id, data: { reviewed: true, reviewer_notes: reviewDoc.reviewer_notes, status: 'completed', mapped_to_accounting: true } });
     setReviewOpen(false);
     toast({ title: 'Marked as reviewed & mapped to accounting' });
   };
 
+  // ─── Filtered list ──────────────────────────────────────────────────────────
   const filtered = docs.filter(d => {
     const matchStatus = filterStatus === 'all' || d.status === filterStatus;
     const matchSearch = !search || d.document_name?.toLowerCase().includes(search.toLowerCase()) || d.client_name?.toLowerCase().includes(search.toLowerCase());
@@ -305,9 +357,9 @@ export default function AIDocumentPipeline() {
           <h1 className="text-2xl font-display font-bold flex items-center gap-2">
             <Brain className="w-6 h-6 text-primary" /> AI Document Pipeline
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Automatically extract, map & anomaly-flag financial documents</p>
+          <p className="text-sm text-muted-foreground mt-1">Bulk upload, extract & anomaly-flag financial documents</p>
         </div>
-        <Button onClick={() => setUploadOpen(true)} disabled={processing}>
+        <Button onClick={() => { setBulkFiles([]); setUploadOpen(true); }}>
           <Upload className="w-4 h-4 mr-2" /> Upload & Process
         </Button>
       </div>
@@ -327,8 +379,21 @@ export default function AIDocumentPipeline() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
+      {/* Filters + bulk actions */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={allSelected(filtered)}
+            onCheckedChange={() => toggleAll(filtered)}
+            disabled={filtered.length === 0}
+          />
+          <span className="text-xs text-muted-foreground">Select all</span>
+        </div>
+        {selected.size > 0 && (
+          <Button variant="destructive" size="sm" className="h-8 text-xs" onClick={handleDeleteSelected} disabled={deleting}>
+            <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete {selected.size} selected
+          </Button>
+        )}
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Search documents…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -353,54 +418,67 @@ export default function AIDocumentPipeline() {
       ) : (
         <div className="space-y-3">
           {filtered.map(doc => (
-            <ProcessedDocCard key={doc.id} doc={doc} onReview={handleReview} />
+            <ProcessedDocCard
+              key={doc.id}
+              doc={doc}
+              onReview={handleReview}
+              onDelete={handleDelete}
+              selected={selected.has(doc.id)}
+              onSelect={() => toggleSelect(doc.id)}
+            />
           ))}
         </div>
       )}
 
-      {/* Upload Dialog */}
+      {/* Upload Dialog (bulk) */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="font-display">Upload & Process Document</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle className="font-display">Upload & Process Documents</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
+            {/* Drop zone */}
             <div>
-              <Label>File *</Label>
+              <Label>Files *</Label>
               <div className="mt-1 border-2 border-dashed border-border rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer">
-                <input type="file" className="hidden" id="ai-file-upload" onChange={handleFileUpload} accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls" />
+                <input type="file" className="hidden" id="ai-file-upload" onChange={handleFilePick} accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls" multiple />
                 <label htmlFor="ai-file-upload" className="cursor-pointer">
                   <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    {uploading ? 'Uploading…' : fileUrl ? '✓ File ready for processing' : 'Click to upload'}
-                  </p>
-                  {!fileUrl && !uploading && <p className="text-xs text-muted-foreground/60 mt-1">PDF, CSV, Excel, Images</p>}
+                  <p className="text-sm text-muted-foreground">Click to add files — you can select multiple</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">PDF, CSV, Excel, Images</p>
                 </label>
               </div>
             </div>
+
+            {/* File queue */}
+            {bulkFiles.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 px-3 max-h-52 overflow-y-auto">
+                {bulkFiles.map(item => (
+                  <BulkFileRow key={item.id} item={item} onRemove={removeFile} onTypeChange={updateType} />
+                ))}
+              </div>
+            )}
+
+            {/* Shared client */}
             <div className="space-y-1.5">
-              <Label>Document Name</Label>
-              <Input value={form.document_name} onChange={e => setForm(f => ({ ...f, document_name: e.target.value }))} placeholder="e.g. TD Bank Statement March 2025" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Client</Label>
-                <Select value={form.client_id} onValueChange={handleClientChange}>
-                  <SelectTrigger><SelectValue placeholder="Optional" /></SelectTrigger>
-                  <SelectContent>{clients.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Document Type</Label>
-                <Select value={form.document_type} onValueChange={v => setForm(f => ({ ...f, document_type: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{DOC_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+              <Label>Assign to Client (optional — applies to all files)</Label>
+              <Select value={sharedClient} onValueChange={setSharedClient}>
+                <SelectTrigger><SelectValue placeholder="No client" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={null}>No client</SelectItem>
+                  {clients.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancel</Button>
-            <Button onClick={handleProcess} disabled={!fileUrl || processing || uploading}>
-              <Brain className="w-4 h-4 mr-2" /> {processing ? 'Processing…' : 'Process with AI'}
+            <Button
+              onClick={handleProcessAll}
+              disabled={bulkFiles.filter(f => f.status === 'queued').length === 0 || bulkRunning}
+            >
+              <Brain className="w-4 h-4 mr-2" />
+              {bulkRunning
+                ? `Processing… (${bulkFiles.filter(f => f.status === 'processing').length} active)`
+                : `Process ${bulkFiles.filter(f => f.status === 'queued').length} file(s) with AI`}
             </Button>
           </DialogFooter>
         </DialogContent>
