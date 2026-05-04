@@ -18,6 +18,7 @@ import StaffManagement from '@/pages/StaffManagement';
 import TimeTracker from '@/pages/TimeTracker';
 import ClientNotes from '@/pages/ClientNotes';
 import AIDocumentPipeline from '@/pages/AIDocumentPipeline';
+import Quotes from '@/pages/Quotes';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -48,6 +49,7 @@ const AuthenticatedApp = () => {
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/clients" element={<Clients />} />
+        <Route path="/quotes" element={<Quotes />} />
         <Route path="/filings" element={<TaxFilings />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/appointments" element={<Appointments />} />

@@ -1,0 +1,75 @@
+{
+  "name": "Quote",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "description": "Related client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for display"
+    },
+    "client_email": {
+      "type": "string",
+      "description": "Client email for sending"
+    },
+    "quote_number": {
+      "type": "string",
+      "description": "Quote reference number"
+    },
+    "title": {
+      "type": "string",
+      "description": "Quote title / subject"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "sent",
+        "accepted",
+        "declined",
+        "expired"
+      ],
+      "default": "draft"
+    },
+    "issue_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "line_items": {
+      "type": "string",
+      "description": "JSON array of line items [{description, quantity, unit_price, amount}]"
+    },
+    "subtotal": {
+      "type": "number"
+    },
+    "tax_rate": {
+      "type": "number",
+      "default": 13,
+      "description": "Tax rate %"
+    },
+    "tax_amount": {
+      "type": "number"
+    },
+    "total": {
+      "type": "number"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notes or terms to include on the quote"
+    },
+    "sent_at": {
+      "type": "string",
+      "description": "When the quote was emailed"
+    }
+  },
+  "required": [
+    "client_id",
+    "title"
+  ]
+}

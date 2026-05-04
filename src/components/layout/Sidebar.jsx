@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, FileText, CheckSquare, FolderOpen, 
-  Bot, ChevronLeft, ChevronRight, LogOut, CalendarDays, ArrowDownToLine, UserCog, Clock, NotebookPen, Sparkles
+  Bot, ChevronLeft, ChevronRight, LogOut, CalendarDays, ArrowDownToLine, UserCog, Clock, NotebookPen, Sparkles, FilePlus
 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { cn } from '@/lib/utils';
@@ -13,6 +13,7 @@ const navItems = [
   { path: '/filings', label: 'Tax Filings', icon: FileText },
   { path: '/tasks', label: 'Tasks', icon: CheckSquare },
   { path: '/appointments', label: 'Appointments', icon: CalendarDays },
+  { path: '/quotes', label: 'Quotes', icon: FilePlus },
   { path: '/documents', label: 'Documents', icon: FolderOpen },
   { path: '/ai-advisor', label: 'AI Tax Advisor', icon: Bot },
   { path: '/ai-doc-pipeline', label: 'AI Doc Pipeline', icon: Sparkles },
