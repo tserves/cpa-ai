@@ -254,7 +254,7 @@ function QuoteFormDialog({ open, onOpenChange, editQuote, clients }) {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => saveMut.mutate()} disabled={!form.client_id || !form.title || saveMut.isPending}>
+          <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
             {saveMut.isPending ? 'Saving…' : editQuote ? 'Save Changes' : 'Create Quote'}
           </Button>
         </DialogFooter>
