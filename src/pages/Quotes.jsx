@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Separator } from '@/components/ui/separator';
 import {
   Plus, Send, Trash2, Search, FilePlus, Edit2, Copy, CheckCircle2,
-  XCircle, Clock, FileText, DollarSign
+  XCircle, Clock, FileText, DollarSign, Eye
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { format } from 'date-fns';
@@ -39,6 +39,67 @@ function statusBadge(status) {
 
 function generateNumber() {
   return `Q-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+}
+
+function buildEmailHtml(quote, emailNote = '') {
+  const lineItems = quote.line_items
+    ? (typeof quote.line_items === 'string' ? JSON.parse(quote.line_items) : quote.line_items)
+    : [];
+  const lineHtml = lineItems.map(l =>
+    `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">${l.description}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${l.quantity}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${Number(l.unit_price).toFixed(2)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${Number(l.amount).toFixed(2)}</td></tr>`
+  ).join('');
+
+  return `
+<div style="font-family:Inter,sans-serif;max-width:600px;margin:auto;color:#1e293b">
+  <div style="background:#1e2d4a;padding:28px 32px;border-radius:12px 12px 0 0">
+    <h1 style="margin:0;color:#f8fafc;font-size:22px">Quote ${quote.quote_number || ''}</h1>
+    <p style="margin:6px 0 0;color:#94a3b8;font-size:14px">${quote.title || ''}</p>
+  </div>
+  <div style="background:#fff;padding:28px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">
+    <p style="margin:0 0 20px">Dear ${quote.client_name || 'Client'},</p>
+    ${emailNote ? `<p style="margin:0 0 20px;white-space:pre-line">${emailNote}</p><hr style="border:none;border-top:1px solid #e2e8f0;margin:0 0 20px"/>` : '<p style="margin:0 0 20px">Please find your quote details below:</p>'}
+    <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:8px;text-align:left">Description</th>
+        <th style="padding:8px;text-align:center">Qty</th>
+        <th style="padding:8px;text-align:right">Rate</th>
+        <th style="padding:8px;text-align:right">Amount</th>
+      </tr></thead>
+      <tbody>${lineHtml}</tbody>
+    </table>
+    <div style="text-align:right;margin-top:12px;font-size:14px">
+      <p style="margin:4px 0">Subtotal: <strong>$${(quote.subtotal || 0).toFixed(2)}</strong></p>
+      <p style="margin:4px 0">Tax (${quote.tax_rate || 0}%): <strong>$${(quote.tax_amount || 0).toFixed(2)}</strong></p>
+      <p style="margin:4px 0;font-size:18px">Total: <strong>$${(quote.total || 0).toFixed(2)}</strong></p>
+    </div>
+    ${quote.expiry_date ? `<p style="margin-top:20px;color:#64748b;font-size:13px">This quote is valid until ${quote.expiry_date}.</p>` : ''}
+    ${quote.notes ? `<p style="margin-top:12px;color:#64748b;font-size:13px;border-top:1px solid #e2e8f0;padding-top:12px">${quote.notes}</p>` : ''}
+  </div>
+</div>`;
+}
+
+function PreviewQuoteDialog({ open, onOpenChange, quote }) {
+  const html = quote ? buildEmailHtml(quote) : '';
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Quote Preview — {quote?.quote_number}</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-auto border rounded-lg bg-gray-50 p-2">
+          <iframe
+            srcDoc={`<!DOCTYPE html><html><body style="margin:16px;background:#f1f5f9">${html}</body></html>`}
+            className="w-full rounded"
+            style={{ minHeight: '500px', border: 'none' }}
+            title="Quote Preview"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function LineItemRow({ item, onChange, onRemove }) {
@@ -278,40 +339,7 @@ function SendQuoteDialog({ open, onOpenChange, quote }) {
   const handleSend = async () => {
     if (!to) return;
     setSending(true);
-
-    const lineItems = quote.line_items ? JSON.parse(quote.line_items) : [];
-    const lineHtml = lineItems.map(l =>
-      `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">${l.description}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${l.quantity}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${l.unit_price.toFixed(2)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">$${l.amount.toFixed(2)}</td></tr>`
-    ).join('');
-
-    const body = `
-<div style="font-family:Inter,sans-serif;max-width:600px;margin:auto;color:#1e293b">
-  <div style="background:#1e2d4a;padding:28px 32px;border-radius:12px 12px 0 0">
-    <h1 style="margin:0;color:#f8fafc;font-size:22px">Quote ${quote.quote_number}</h1>
-    <p style="margin:6px 0 0;color:#94a3b8;font-size:14px">${quote.title}</p>
-  </div>
-  <div style="background:#fff;padding:28px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">
-    <p style="margin:0 0 20px">Dear ${quote.client_name || 'Client'},</p>
-    ${emailNote ? `<p style="margin:0 0 20px;white-space:pre-line">${emailNote}</p><hr style="border:none;border-top:1px solid #e2e8f0;margin:0 0 20px"/>` : '<p style="margin:0 0 20px">Please find your quote details below:</p>'}
-    <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
-      <thead><tr style="background:#f8fafc">
-        <th style="padding:8px;text-align:left">Description</th>
-        <th style="padding:8px;text-align:center">Qty</th>
-        <th style="padding:8px;text-align:right">Rate</th>
-        <th style="padding:8px;text-align:right">Amount</th>
-      </tr></thead>
-      <tbody>${lineHtml}</tbody>
-    </table>
-    <div style="text-align:right;margin-top:12px;font-size:14px">
-      <p style="margin:4px 0">Subtotal: <strong>$${(quote.subtotal || 0).toFixed(2)}</strong></p>
-      <p style="margin:4px 0">Tax (${quote.tax_rate || 0}%): <strong>$${(quote.tax_amount || 0).toFixed(2)}</strong></p>
-      <p style="margin:4px 0;font-size:18px">Total: <strong>$${(quote.total || 0).toFixed(2)}</strong></p>
-    </div>
-    ${quote.expiry_date ? `<p style="margin-top:20px;color:#64748b;font-size:13px">This quote is valid until ${quote.expiry_date}.</p>` : ''}
-    ${quote.notes ? `<p style="margin-top:12px;color:#64748b;font-size:13px;border-top:1px solid #e2e8f0;padding-top:12px">${quote.notes}</p>` : ''}
-  </div>
-</div>`;
-
+    const body = buildEmailHtml(quote, emailNote);
     await base44.integrations.Core.SendEmail({ to, subject: `Quote ${quote.quote_number} — ${quote.title}`, body });
     await base44.entities.Quote.update(quote.id, { status: 'sent', sent_at: new Date().toISOString() });
     queryClient.invalidateQueries({ queryKey: ['quotes'] });
@@ -363,6 +391,8 @@ export default function Quotes() {
   const [editQuote, setEditQuote] = useState(null);
   const [sendOpen, setSendOpen] = useState(false);
   const [sendQuote, setSendQuote] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewQuote, setPreviewQuote] = useState(null);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const queryClient = useQueryClient();
@@ -389,6 +419,7 @@ export default function Quotes() {
 
   const openEdit = (q) => { setEditQuote(q); setFormOpen(true); };
   const openSend = (q) => { setSendQuote(q); setSendOpen(true); };
+  const openPreview = (q) => { setPreviewQuote(q); setPreviewOpen(true); };
 
   const filtered = quotes.filter(q => {
     const matchStatus = filterStatus === 'all' || q.status === filterStatus;
@@ -476,6 +507,9 @@ export default function Quotes() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-lg font-bold">${(q.total || 0).toLocaleString('en-CA', { minimumFractionDigits: 2 })}</span>
+                  <Button size="icon" variant="ghost" className="h-8 w-8" title="Preview" onClick={() => openPreview(q)}>
+                    <Eye className="w-4 h-4" />
+                  </Button>
                   <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => openSend(q)}>
                     <Send className="w-3.5 h-3.5 mr-1" /> Send
                   </Button>
@@ -506,6 +540,9 @@ export default function Quotes() {
       )}
       {sendOpen && sendQuote && (
         <SendQuoteDialog open={sendOpen} onOpenChange={setSendOpen} quote={sendQuote} />
+      )}
+      {previewOpen && previewQuote && (
+        <PreviewQuoteDialog open={previewOpen} onOpenChange={setPreviewOpen} quote={previewQuote} />
       )}
     </div>
   );
