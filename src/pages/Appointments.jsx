@@ -42,6 +42,8 @@ export default function Appointments() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [draggingAppt, setDraggingAppt] = useState(null);
+  const [dragOverDate, setDragOverDate] = useState(null);
   const queryClient = useQueryClient();
 
   const { data: appointments = [], isLoading } = useQuery({
@@ -99,6 +101,34 @@ export default function Appointments() {
 
   const handleStatusChange = (appt, status) => {
     updateMut.mutate({ id: appt.id, data: { ...appt, status } });
+  };
+
+  const handleDragStart = (e, appt) => {
+    setDraggingAppt(appt);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e, d) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverDate(format(d, 'yyyy-MM-dd'));
+  };
+
+  const handleDrop = (e, d) => {
+    e.preventDefault();
+    if (draggingAppt) {
+      const newDate = format(d, 'yyyy-MM-dd');
+      if (newDate !== draggingAppt.date) {
+        updateMut.mutate({ id: draggingAppt.id, data: { ...draggingAppt, date: newDate } });
+      }
+    }
+    setDraggingAppt(null);
+    setDragOverDate(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingAppt(null);
+    setDragOverDate(null);
   };
 
   // Build calendar grid
@@ -166,10 +196,14 @@ export default function Appointments() {
                   <div
                     key={i}
                     onClick={() => setSelectedDate(d)}
+                    onDragOver={(e) => handleDragOver(e, d)}
+                    onDrop={(e) => handleDrop(e, d)}
+                    onDragLeave={() => setDragOverDate(null)}
                     className={cn(
                       "bg-card min-h-[64px] p-1.5 cursor-pointer transition-colors hover:bg-muted/50",
                       isSelected && "ring-2 ring-inset ring-accent",
-                      !isCurrentMonth && "opacity-40"
+                      !isCurrentMonth && "opacity-40",
+                      dragOverDate === format(d, 'yyyy-MM-dd') && draggingAppt && "bg-accent/10 ring-2 ring-inset ring-accent/50"
                     )}
                   >
                     <span className={cn(
@@ -181,7 +215,17 @@ export default function Appointments() {
                     </span>
                     <div className="mt-0.5 space-y-0.5">
                       {dayAppts.slice(0, 2).map((a, ai) => (
-                        <div key={ai} className="text-[9px] leading-tight px-1 py-0.5 rounded bg-accent/20 text-accent-foreground truncate font-medium">
+                        <div
+                          key={ai}
+                          draggable
+                          onDragStart={(e) => { e.stopPropagation(); handleDragStart(e, a); }}
+                          onDragEnd={handleDragEnd}
+                          onClick={(e) => { e.stopPropagation(); openEdit(a); }}
+                          className={cn(
+                            "text-[9px] leading-tight px-1 py-0.5 rounded bg-accent/20 text-accent-foreground truncate font-medium cursor-grab active:cursor-grabbing hover:bg-accent/40 transition-colors",
+                            draggingAppt?.id === a.id && "opacity-40"
+                          )}
+                        >
                           {a.time} {a.title}
                         </div>
                       ))}
