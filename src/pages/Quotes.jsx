@@ -267,9 +267,13 @@ function SendQuoteDialog({ open, onOpenChange, quote }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [to, setTo] = useState(quote?.client_email || '');
+  const [emailNote, setEmailNote] = useState('');
   const [sending, setSending] = useState(false);
 
-  React.useEffect(() => setTo(quote?.client_email || ''), [quote]);
+  useEffect(() => {
+    setTo(quote?.client_email || '');
+    setEmailNote('');
+  }, [quote, open]);
 
   const handleSend = async () => {
     if (!to) return;
@@ -288,7 +292,7 @@ function SendQuoteDialog({ open, onOpenChange, quote }) {
   </div>
   <div style="background:#fff;padding:28px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">
     <p style="margin:0 0 20px">Dear ${quote.client_name || 'Client'},</p>
-    <p>Please find your quote details below:</p>
+    ${emailNote ? `<p style="margin:0 0 20px;white-space:pre-line">${emailNote}</p><hr style="border:none;border-top:1px solid #e2e8f0;margin:0 0 20px"/>` : '<p style="margin:0 0 20px">Please find your quote details below:</p>'}
     <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
       <thead><tr style="background:#f8fafc">
         <th style="padding:8px;text-align:left">Description</th>
@@ -318,13 +322,29 @@ function SendQuoteDialog({ open, onOpenChange, quote }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Send Quote via Email</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <p className="text-sm text-muted-foreground">Send <strong>{quote?.quote_number}</strong> to:</p>
+        <div className="space-y-4 py-2">
+          {/* Quote summary */}
+          <div className="rounded-lg bg-muted/40 border p-3 text-sm space-y-1">
+            <p className="font-semibold">{quote?.title}</p>
+            <p className="text-xs text-muted-foreground">{quote?.quote_number} · {quote?.client_name}</p>
+            <p className="text-base font-bold">${(quote?.total || 0).toLocaleString('en-CA', { minimumFractionDigits: 2 })}</p>
+          </div>
+
           <div className="space-y-1.5">
             <Label>Recipient Email</Label>
             <Input value={to} onChange={e => setTo(e.target.value)} placeholder="client@email.com" type="email" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Message / Note <span className="text-muted-foreground text-xs font-normal">(optional — appears at top of email)</span></Label>
+            <Textarea
+              value={emailNote}
+              onChange={e => setEmailNote(e.target.value)}
+              placeholder={`e.g. Hi ${quote?.client_name || 'there'}, please find your quote attached. Let us know if you have any questions!`}
+              className="h-28 text-sm"
+            />
           </div>
         </div>
         <DialogFooter>
