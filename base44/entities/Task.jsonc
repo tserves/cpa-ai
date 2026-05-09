@@ -58,6 +58,18 @@
         "other"
       ],
       "default": "tax_prep"
+    },
+    "follow_up_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "pending",
+        "contacted",
+        "responded",
+        "resolved"
+      ],
+      "default": "none",
+      "description": "Client follow-up status for this task"
     }
   },
   "required": [

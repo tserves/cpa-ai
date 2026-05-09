@@ -6,13 +6,20 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, MapPin, Users } from 'lucide-react';
+import { Plus, Search, MoreHorizontal, Pencil, Trash2, Mail, Phone, MapPin, Users, AlertTriangle } from 'lucide-react';
 import ClientFormDialog from '@/components/clients/ClientFormDialog';
 
 const statusColors = {
   active: 'bg-green-100 text-green-700',
   inactive: 'bg-secondary text-muted-foreground',
   prospect: 'bg-blue-100 text-blue-700',
+};
+
+const paymentStatusColors = {
+  paid: 'bg-green-100 text-green-700',
+  pending: 'bg-amber-100 text-amber-700',
+  overdue: 'bg-red-100 text-red-700',
+  partial: 'bg-orange-100 text-orange-700',
 };
 
 const typeLabels = {
@@ -151,9 +158,20 @@ export default function Clients() {
                   <div className="flex items-center gap-2"><MapPin className="w-3 h-3" />{client.province}</div>
                 )}
               </div>
-              {client.gst_hst_registered && (
-                <Badge variant="outline" className="mt-3 text-[10px]">GST/HST Registered</Badge>
-              )}
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {client.gst_hst_registered && (
+                  <Badge variant="outline" className="text-[10px]">GST/HST Registered</Badge>
+                )}
+                {client.payment_status && (
+                  <Badge className={`${paymentStatusColors[client.payment_status]} text-[10px] px-1.5 py-0 border-0 flex items-center gap-1`}>
+                    {(client.payment_status === 'pending' || client.payment_status === 'overdue') && (
+                      <AlertTriangle className="w-2.5 h-2.5" />
+                    )}
+                    {client.payment_status.charAt(0).toUpperCase() + client.payment_status.slice(1)}
+                    {client.outstanding_balance > 0 && ` · $${client.outstanding_balance.toLocaleString()}`}
+                  </Badge>
+                )}
+              </div>
             </Card>
           ))}
         </div>

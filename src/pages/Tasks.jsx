@@ -22,6 +22,14 @@ const statusColors = {
   completed: 'bg-green-100 text-green-700',
 };
 
+const followUpColors = {
+  none: 'bg-secondary text-muted-foreground',
+  pending: 'bg-amber-100 text-amber-700',
+  contacted: 'bg-blue-100 text-blue-700',
+  responded: 'bg-purple-100 text-purple-700',
+  resolved: 'bg-green-100 text-green-700',
+};
+
 const priorityColors = {
   low: 'bg-secondary text-muted-foreground',
   medium: 'bg-accent/10 text-accent-foreground',
@@ -33,7 +41,7 @@ const CATEGORIES = ['tax_prep', 'bookkeeping', 'audit', 'advisory', 'admin', 'cl
 
 const emptyTask = {
   title: '', description: '', client_id: '', client_name: '',
-  assigned_to: '', due_date: '', status: 'todo', priority: 'medium', category: 'tax_prep'
+  assigned_to: '', due_date: '', status: 'todo', priority: 'medium', category: 'tax_prep', follow_up_status: 'none'
 };
 
 export default function Tasks() {
@@ -177,6 +185,11 @@ export default function Tasks() {
                       {task.category.replace('_', ' ')}
                     </Badge>
                   )}
+                  {task.follow_up_status && task.follow_up_status !== 'none' && (
+                    <Badge className={`${followUpColors[task.follow_up_status]} text-[10px] px-1.5 py-0 border-0 capitalize`}>
+                      Follow-up: {task.follow_up_status}
+                    </Badge>
+                  )}
                   {task.due_date && (
                     <span className={`text-[10px] flex items-center gap-1 ${isOverdue(task) ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
                       {isOverdue(task) ? <AlertCircle className="w-3 h-3" /> : <Calendar className="w-3 h-3" />}
@@ -266,6 +279,19 @@ export default function Tasks() {
               <div>
                 <Label>Assigned To</Label>
                 <Input value={form.assigned_to} onChange={e => setForm({...form, assigned_to: e.target.value})} placeholder="Email" />
+              </div>
+              <div>
+                <Label>Follow-up Status</Label>
+                <Select value={form.follow_up_status || 'none'} onValueChange={v => setForm({...form, follow_up_status: v})}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="contacted">Contacted</SelectItem>
+                    <SelectItem value="responded">Responded</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>

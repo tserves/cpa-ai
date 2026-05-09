@@ -25,7 +25,8 @@ const PROVINCES = [
 const emptyClient = {
   name: '', type: 'individual', email: '', phone: '', address: '',
   province: '', sin_or_bn: '', fiscal_year_end: '', gst_hst_registered: false,
-  status: 'active', notes: '', annual_revenue: ''
+  status: 'active', notes: '', annual_revenue: '', payment_status: 'paid',
+  last_payment_date: '', outstanding_balance: ''
 };
 
 export default function ClientFormDialog({ open, onOpenChange, client, onSave }) {
@@ -42,7 +43,11 @@ export default function ClientFormDialog({ open, onOpenChange, client, onSave })
 
   const handleSave = async () => {
     setSaving(true);
-    const data = { ...form, annual_revenue: form.annual_revenue ? Number(form.annual_revenue) : undefined };
+    const data = {
+      ...form,
+      annual_revenue: form.annual_revenue ? Number(form.annual_revenue) : undefined,
+      outstanding_balance: form.outstanding_balance ? Number(form.outstanding_balance) : undefined,
+    };
     await onSave(data);
     setSaving(false);
     onOpenChange(false);
@@ -116,6 +121,26 @@ export default function ClientFormDialog({ open, onOpenChange, client, onSave })
             <div className="col-span-2 flex items-center gap-3">
               <Switch checked={form.gst_hst_registered} onCheckedChange={v => setForm({...form, gst_hst_registered: v})} />
               <Label>GST/HST Registered</Label>
+            </div>
+            <div>
+              <Label>Payment Status</Label>
+              <Select value={form.payment_status || 'paid'} onValueChange={v => setForm({...form, payment_status: v})}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paid">Paid</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Outstanding Balance ($)</Label>
+              <Input value={form.outstanding_balance} onChange={e => setForm({...form, outstanding_balance: e.target.value})} type="number" placeholder="0.00" />
+            </div>
+            <div>
+              <Label>Last Payment Date</Label>
+              <Input value={form.last_payment_date} onChange={e => setForm({...form, last_payment_date: e.target.value})} type="date" />
             </div>
             <div className="col-span-2">
               <Label>Notes</Label>

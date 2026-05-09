@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { CalendarDays, Plus, MoreHorizontal, Trash2, Clock, User, MapPin, ChevronLeft, ChevronRight, CheckCircle2, XCircle } from 'lucide-react';
+import { CalendarDays, Plus, MoreHorizontal, Trash2, Clock, User, MapPin, ChevronLeft, ChevronRight, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameDay, isSameMonth, addMonths, subMonths, parseISO, isToday } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -70,6 +70,8 @@ export default function Appointments() {
     mutationFn: (id) => base44.entities.Appointment.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['appointments'] }),
   });
+
+  const getSelectedClient = () => clients.find(c => c.id === form.client_id);
 
   const handleClientChange = (clientId) => {
     const client = clients.find(c => c.id === clientId);
@@ -325,6 +327,25 @@ export default function Appointments() {
             <DialogTitle className="font-display">{editingId ? 'Edit Appointment' : 'New Appointment'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {(() => {
+              const sc = getSelectedClient();
+              if (sc && (sc.payment_status === 'pending' || sc.payment_status === 'overdue')) {
+                return (
+                  <div className={`flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm ${sc.payment_status === 'overdue' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium">Payment Alert</p>
+                      <p className="text-xs mt-0.5">
+                        {sc.name} has a <strong>{sc.payment_status}</strong> payment
+                        {sc.outstanding_balance > 0 && ` of $${sc.outstanding_balance.toLocaleString()}`}.
+                        Please follow up before confirming this appointment.
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
             <div>
               <Label>Title *</Label>
               <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Tax Review Meeting" />

@@ -78,6 +78,26 @@
     "annual_revenue": {
       "type": "number",
       "description": "Estimated annual revenue"
+    },
+    "payment_status": {
+      "type": "string",
+      "enum": [
+        "paid",
+        "pending",
+        "overdue",
+        "partial"
+      ],
+      "default": "paid",
+      "description": "Last known payment status"
+    },
+    "last_payment_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of last payment received"
+    },
+    "outstanding_balance": {
+      "type": "number",
+      "description": "Outstanding balance owed by client"
     }
   },
   "required": [
