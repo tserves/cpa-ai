@@ -4,102 +4,86 @@ Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const body = await req.json();
 
-  const { file_url, document_type, client_name, document_name } = await req.json();
+  if (body.mode === 'financial_report') {
+    const fileUrls = body.file_urls || [];
+    const fileNames = body.file_names || [];
+    const reportId = body.report_id;
+    if (!fileUrls.length) return Response.json({ error: 'No files' }, { status: 400 });
+    await base44.asServiceRole.entities.FinancialReport.update(reportId, { status: 'extracting' });
+    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt: 'You are an expert accountant. Extract ALL financial transactions from these ' + fileUrls.length + ' document(s): ' + fileNames.join(', ') + '. For each transaction return: transaction_date (YYYY-MM-DD or null), posting_date, account_name (or UNCLASSIFIED), account_code, debit_amount (number or null), credit_amount (number or null), description, vendor_or_customer, invoice_number, reference_number, tax_amount, payment_method, department, project, category (one of: assets liabilities equity revenue cogs operating_expenses other_income other_expenses unclassified), confidence (0-1), needs_review (true if confidence<0.85 or field missing), review_reason. Also return: opening_balance, closing_balance, period_start, period_end, document_currency (default CAD), source_document_type, total_debits, total_credits, validation (object: debit_credit_balanced bool, balance_reconciles bool, duplicate_transactions array of [i,j] pairs, missing_dates array of indices, missing_accounts array of indices, unclassified_count number), chart_of_accounts (object grouping account names by category), document_summary. NEVER fabricate. Set null + needs_review=true if uncertain.',
+      file_urls: fileUrls,
+      model: 'claude_sonnet_4_6',
+      response_json_schema: { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, opening_balance: { type: 'number' }, closing_balance: { type: 'number' }, period_start: { type: 'string' }, period_end: { type: 'string' }, document_currency: { type: 'string' }, source_document_type: { type: 'string' }, total_debits: { type: 'number' }, total_credits: { type: 'number' }, validation: { type: 'object' }, chart_of_accounts: { type: 'object' }, document_summary: { type: 'string' } } }
+    });
+    const txs = result.transactions || [];
+    const reviewCount = txs.filter(function(t) { return t.needs_review; }).length;
+    const mappedCount = txs.filter(function(t) { return !t.needs_review && t.category !== 'unclassified'; }).length;
+    const issues = [];
+    const v = result.validation || {};
+    if (!v.debit_credit_balanced) issues.push({ type: 'imbalance', severity: 'high', message: 'Debits do not equal credits' });
+    if (!v.balance_reconciles && result.opening_balance != null) issues.push({ type: 'balance_mismatch', severity: 'high', message: 'Balance does not reconcile' });
+    if (v.unclassified_count > 0) issues.push({ type: 'unclassified', severity: 'low', message: v.unclassified_count + ' transaction(s) unclassified' });
+    (v.missing_dates || []).forEach(function(i) { issues.push({ type: 'missing_date', severity: 'medium', message: 'Transaction #' + (i+1) + ' missing date', index: i }); });
+    (v.missing_accounts || []).forEach(function(i) { issues.push({ type: 'missing_account', severity: 'medium', message: 'Transaction #' + (i+1) + ' missing account', index: i }); });
+    (v.duplicate_transactions || []).forEach(function(p) { issues.push({ type: 'duplicate', severity: 'medium', message: 'Possible duplicate at ' + p[0] + ' and ' + p[1] }); });
+    await base44.asServiceRole.entities.FinancialReport.update(reportId, { status: reviewCount > 0 ? 'review' : 'completed', transactions_raw: JSON.stringify(txs), transactions_reviewed: JSON.stringify(txs), validation_issues: JSON.stringify(issues), chart_of_accounts: JSON.stringify(result.chart_of_accounts || {}), total_debits: result.total_debits || 0, total_credits: result.total_credits || 0, transaction_count: txs.length, mapped_count: mappedCount, review_count: reviewCount });
+    return Response.json({ success: true, transaction_count: txs.length, needs_review: reviewCount, mapped_count: mappedCount, validation_issues: issues.length });
+  }
 
+  if (body.mode === 'generate_reports') {
+    const reportId = body.report_id;
+    const dateFrom = body.date_from || null;
+    const dateTo = body.date_to || null;
+    const records = await base44.asServiceRole.entities.FinancialReport.filter({ id: reportId });
+    if (!records || !records.length) return Response.json({ error: 'Report not found' }, { status: 404 });
+    const rec = records[0];
+    const all = JSON.parse(rec.transactions_reviewed || rec.transactions_raw || '[]');
+    const txs = all.filter(function(t) {
+      const d = t.transaction_date || t.posting_date;
+      if (!d) return true;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+    const acctMap = {};
+    txs.forEach(function(tx) {
+      const n = tx.account_name || 'Unclassified';
+      if (!acctMap[n]) acctMap[n] = { account_name: n, account_code: tx.account_code || null, category: tx.category || 'unclassified', transactions: [], debit_total: 0, credit_total: 0, opening_balance: 0, closing_balance: 0 };
+      acctMap[n].transactions.push(tx);
+      acctMap[n].debit_total += (tx.debit_amount || 0);
+      acctMap[n].credit_total += (tx.credit_amount || 0);
+    });
+    Object.values(acctMap).forEach(function(a) {
+      a.transactions.sort(function(x, y) { return (x.transaction_date||'') < (y.transaction_date||'') ? -1 : 1; });
+      a.closing_balance = a.opening_balance + a.debit_total - a.credit_total;
+    });
+    const tD = txs.reduce(function(s,t){ return s+(t.debit_amount||0); },0);
+    const tC = txs.reduce(function(s,t){ return s+(t.credit_amount||0); },0);
+    const gl = { generated_at: new Date().toISOString(), date_from: dateFrom, date_to: dateTo, total_debits: tD, total_credits: tC, accounts: Object.values(acctMap), transaction_count: txs.length };
+    const lines = function(cat, useCredit) { const g={}; txs.filter(function(t){return t.category===cat;}).forEach(function(t){const k=t.account_name||'Unclassified'; if(!g[k])g[k]={account:k,amount:0}; g[k].amount+=useCredit?(t.credit_amount||0):(t.debit_amount||0);}); return Object.values(g); };
+    const rev = txs.filter(function(t){return t.category==='revenue';}).reduce(function(s,t){return s+(t.credit_amount||0);},0);
+    const cogs = txs.filter(function(t){return t.category==='cogs';}).reduce(function(s,t){return s+(t.debit_amount||0);},0);
+    const gp = rev - cogs;
+    const opex = txs.filter(function(t){return t.category==='operating_expenses';}).reduce(function(s,t){return s+(t.debit_amount||0);},0);
+    const noi = gp - opex;
+    const oi = txs.filter(function(t){return t.category==='other_income';}).reduce(function(s,t){return s+(t.credit_amount||0);},0);
+    const oe = txs.filter(function(t){return t.category==='other_expenses';}).reduce(function(s,t){return s+(t.debit_amount||0);},0);
+    const np = noi + oi - oe;
+    const pl = { generated_at: new Date().toISOString(), date_from: dateFrom, date_to: dateTo, revenue: rev, revenue_lines: lines('revenue',true), cogs, cogs_lines: lines('cogs',false), gross_profit: gp, gross_margin_pct: rev>0?((gp/rev)*100).toFixed(1):null, operating_expenses: opex, operating_expense_lines: lines('operating_expenses',false), net_operating_income: noi, other_income: oi, other_income_lines: lines('other_income',true), other_expenses: oe, other_expense_lines: lines('other_expenses',false), net_profit: np, transaction_count: txs.length };
+    const now = new Date().toISOString();
+    await base44.asServiceRole.entities.FinancialReport.update(reportId, { gl_report: JSON.stringify(gl), pl_report: JSON.stringify(pl), status: 'completed', gl_generated_at: now, pl_generated_at: now });
+    return Response.json({ success: true, gl_report: gl, pl_report: pl });
+  }
+
+  // Original single-file pipeline mode
+  const { file_url, document_type, client_name, document_name } = body;
   if (!file_url) return Response.json({ error: 'file_url is required' }, { status: 400 });
-
-  // Step 1: Extract financial data using AI vision
-  const extractionPrompt = `You are a financial data extraction AI for a Canadian CPA firm.
-Analyze this financial document (${document_type}: "${document_name}" for client "${client_name}") and extract ALL financial data.
-
-Return a JSON with this exact structure:
-{
-  "document_summary": "brief description of what this document is",
-  "period_start": "YYYY-MM-DD or null",
-  "period_end": "YYYY-MM-DD or null",
-  "total_amount": number (net total or balance, 0 if not applicable),
-  "currency": "CAD",
-  "transactions": [
-    {
-      "date": "YYYY-MM-DD",
-      "description": "transaction description",
-      "amount": number (negative for debits/expenses, positive for credits/income),
-      "category": "one of: revenue, expense, transfer, tax, payroll, other",
-      "vendor_or_source": "vendor or payer name if visible",
-      "reference": "cheque/invoice/ref number if present"
-    }
-  ],
-  "summary_by_category": {
-    "revenue": number,
-    "expense": number,
-    "transfer": number,
-    "tax": number,
-    "payroll": number,
-    "other": number
-  },
-  "anomalies": [
-    {
-      "severity": "low|medium|high",
-      "type": "duplicate|unusual_amount|missing_info|round_number|unusual_vendor|date_gap|large_cash|other",
-      "description": "clear explanation of the anomaly",
-      "transaction_index": number or null,
-      "amount": number or null
-    }
-  ],
-  "accounting_entries": [
-    {
-      "debit_account": "account name",
-      "credit_account": "account name",
-      "amount": number,
-      "description": "journal entry description",
-      "date": "YYYY-MM-DD"
-    }
-  ]
-}
-
-Be thorough — flag: duplicate transactions, unusually large/small amounts, round-number amounts over $1000, missing dates or descriptions, gaps in statement dates, unusual vendors, large cash transactions over $10,000 (FINTRAC).`;
-
-  const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
-    prompt: extractionPrompt,
-    file_urls: [file_url],
-    model: 'claude_sonnet_4_6',
-    response_json_schema: {
-      type: 'object',
-      properties: {
-        document_summary: { type: 'string' },
-        period_start: { type: 'string' },
-        period_end: { type: 'string' },
-        total_amount: { type: 'number' },
-        currency: { type: 'string' },
-        transactions: { type: 'array', items: { type: 'object' } },
-        summary_by_category: { type: 'object' },
-        anomalies: { type: 'array', items: { type: 'object' } },
-        accounting_entries: { type: 'array', items: { type: 'object' } }
-      }
-    }
-  });
-
+  const extractionPrompt = `You are a financial data extraction AI for a Canadian CPA firm. Analyze this financial document (${document_type}: "${document_name}" for client "${client_name}") and extract ALL financial data. Return JSON with: document_summary, period_start (YYYY-MM-DD), period_end, total_amount (number), currency, transactions (array of {date,description,amount,category,vendor_or_source,reference}), summary_by_category ({revenue,expense,transfer,tax,payroll,other}), anomalies (array of {severity,type,description,transaction_index,amount}), accounting_entries (array of {debit_account,credit_account,amount,description,date}). Flag duplicates, unusual amounts, missing info, large cash over $10k.`;
+  const result = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt: extractionPrompt, file_urls: [file_url], model: 'claude_sonnet_4_6', response_json_schema: { type: 'object', properties: { document_summary: {type:'string'}, period_start: {type:'string'}, period_end: {type:'string'}, total_amount: {type:'number'}, currency: {type:'string'}, transactions: {type:'array',items:{type:'object'}}, summary_by_category: {type:'object'}, anomalies: {type:'array',items:{type:'object'}}, accounting_entries: {type:'array',items:{type:'object'}} } } });
   const anomalyCount = (result.anomalies || []).length;
-  const needsReview = anomalyCount > 0 || (result.anomalies || []).some(a => a.severity === 'high');
-
-  return Response.json({
-    extracted_data: JSON.stringify({
-      document_summary: result.document_summary,
-      period_start: result.period_start,
-      period_end: result.period_end,
-      total_amount: result.total_amount,
-      currency: result.currency,
-      transactions: result.transactions || [],
-      summary_by_category: result.summary_by_category || {},
-      accounting_entries: result.accounting_entries || []
-    }),
-    anomalies: JSON.stringify(result.anomalies || []),
-    anomaly_count: anomalyCount,
-    total_amount: result.total_amount || 0,
-    transaction_count: (result.transactions || []).length,
-    period_start: result.period_start || null,
-    period_end: result.period_end || null,
-    status: needsReview ? 'needs_review' : 'completed'
-  });
+  const needsReview = anomalyCount > 0 || (result.anomalies || []).some(function(a) { return a.severity === 'high'; });
+  return Response.json({ extracted_data: JSON.stringify({ document_summary: result.document_summary, period_start: result.period_start, period_end: result.period_end, total_amount: result.total_amount, currency: result.currency, transactions: result.transactions || [], summary_by_category: result.summary_by_category || {}, accounting_entries: result.accounting_entries || [] }), anomalies: JSON.stringify(result.anomalies || []), anomaly_count: anomalyCount, total_amount: result.total_amount || 0, transaction_count: (result.transactions || []).length, period_start: result.period_start || null, period_end: result.period_end || null, status: needsReview ? 'needs_review' : 'completed' });
 });

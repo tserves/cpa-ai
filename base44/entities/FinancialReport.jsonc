@@ -1,0 +1,97 @@
+{
+  "name": "FinancialReport",
+  "type": "object",
+  "properties": {
+    "session_name": {
+      "type": "string",
+      "description": "User-defined name for this upload session"
+    },
+    "uploaded_by": {
+      "type": "string",
+      "description": "User email who uploaded"
+    },
+    "file_names": {
+      "type": "string",
+      "description": "JSON array of uploaded file names"
+    },
+    "file_urls": {
+      "type": "string",
+      "description": "JSON array of uploaded file URLs"
+    },
+    "upload_date": {
+      "type": "string",
+      "description": "ISO timestamp of upload"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "uploading",
+        "extracting",
+        "review",
+        "generating",
+        "completed",
+        "failed"
+      ],
+      "default": "uploading"
+    },
+    "transactions_raw": {
+      "type": "string",
+      "description": "JSON array of all extracted transactions"
+    },
+    "transactions_reviewed": {
+      "type": "string",
+      "description": "JSON array of reviewed/confirmed transactions"
+    },
+    "validation_issues": {
+      "type": "string",
+      "description": "JSON array of validation flags"
+    },
+    "chart_of_accounts": {
+      "type": "string",
+      "description": "JSON object mapping accounts to categories"
+    },
+    "gl_report": {
+      "type": "string",
+      "description": "JSON of generated General Ledger report"
+    },
+    "pl_report": {
+      "type": "string",
+      "description": "JSON of generated Profit & Loss report"
+    },
+    "total_debits": {
+      "type": "number"
+    },
+    "total_credits": {
+      "type": "number"
+    },
+    "transaction_count": {
+      "type": "number"
+    },
+    "mapped_count": {
+      "type": "number"
+    },
+    "review_count": {
+      "type": "number"
+    },
+    "gl_generated_at": {
+      "type": "string"
+    },
+    "pl_generated_at": {
+      "type": "string"
+    },
+    "export_history": {
+      "type": "string",
+      "description": "JSON array of export log entries"
+    },
+    "manual_edits": {
+      "type": "string",
+      "description": "JSON array of manual edits made"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_name"
+  ]
+}
