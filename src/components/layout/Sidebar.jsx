@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, Users, FileText, CheckSquare, FolderOpen, 
-  Bot, ChevronLeft, ChevronRight, LogOut, CalendarDays, ArrowDownToLine, UserCog, Clock, NotebookPen, Sparkles, FilePlus
+  Bot, ChevronLeft, ChevronRight, LogOut, CalendarDays, ArrowDownToLine, UserCog, Clock, NotebookPen, Sparkles, FilePlus, Database
 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,7 @@ const navItems = [
   { path: '/client-notes', label: 'Client Notes', icon: NotebookPen },
   { path: '/staff', label: 'Staff Management', icon: UserCog },
   { path: '/quickbooks-import', label: 'QuickBooks Import', icon: ArrowDownToLine },
+  { path: '/financial-reports', label: 'Financial Reports', icon: Database },
 ];
 
 export default function Sidebar({ collapsed = false, onCollapsedChange }) {

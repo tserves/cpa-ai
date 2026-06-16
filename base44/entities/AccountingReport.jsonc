@@ -13,11 +13,11 @@
     },
     "file_names": {
       "type": "string",
-      "description": "JSON array of file names"
+      "description": "JSON array"
     },
     "file_urls": {
       "type": "string",
-      "description": "JSON array of file URLs"
+      "description": "JSON array"
     },
     "file_progress": {
       "type": "string",
@@ -67,7 +67,7 @@
     },
     "transactions_reviewed": {
       "type": "string",
-      "description": "JSON array of user-reviewed transactions"
+      "description": "JSON array of reviewed transactions"
     },
     "validation_issues": {
       "type": "string",
@@ -76,6 +76,10 @@
     "bank_reconciliation": {
       "type": "string",
       "description": "JSON array of per-file reconciliation results"
+    },
+    "categorization_rules": {
+      "type": "string",
+      "description": "JSON array of saved user rules"
     },
     "total_debits": {
       "type": "number"
@@ -111,9 +115,6 @@
     "review_items_report": {
       "type": "string",
       "description": "Review items JSON"
-    },
-    "vendor_ledger": {
-      "type": "string"
     },
     "reports_generated": {
       "type": "string"

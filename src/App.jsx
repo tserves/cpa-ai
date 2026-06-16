@@ -19,6 +19,7 @@ import TimeTracker from '@/pages/TimeTracker';
 import ClientNotes from '@/pages/ClientNotes';
 import AIDocumentPipeline from '@/pages/AIDocumentPipeline';
 import Quotes from '@/pages/Quotes';
+import FinancialReports from '@/pages/FinancialReports';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -60,6 +61,7 @@ const AuthenticatedApp = () => {
         <Route path="/ai-doc-pipeline" element={<AIDocumentPipeline />} />
         <Route path="/time-tracker" element={<TimeTracker />} />
         <Route path="/client-notes" element={<ClientNotes />} />
+        <Route path="/financial-reports" element={<FinancialReports />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>
