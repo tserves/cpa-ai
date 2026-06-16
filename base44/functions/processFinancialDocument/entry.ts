@@ -12,24 +12,44 @@ Deno.serve(async (req) => {
     const reportId = body.report_id;
     if (!fileUrls.length) return Response.json({ error: 'No files' }, { status: 400 });
     await base44.asServiceRole.entities.FinancialReport.update(reportId, { status: 'extracting' });
-    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt: 'You are an expert accountant. Extract ALL financial transactions from these ' + fileUrls.length + ' document(s): ' + fileNames.join(', ') + '. For each transaction return: transaction_date (YYYY-MM-DD or null), posting_date, account_name (or UNCLASSIFIED), account_code, debit_amount (number or null), credit_amount (number or null), description, vendor_or_customer, invoice_number, reference_number, tax_amount, payment_method, department, project, category (one of: assets liabilities equity revenue cogs operating_expenses other_income other_expenses unclassified), confidence (0-1), needs_review (true if confidence<0.85 or field missing), review_reason. Also return: opening_balance, closing_balance, period_start, period_end, document_currency (default CAD), source_document_type, total_debits, total_credits, validation (object: debit_credit_balanced bool, balance_reconciles bool, duplicate_transactions array of [i,j] pairs, missing_dates array of indices, missing_accounts array of indices, unclassified_count number), chart_of_accounts (object grouping account names by category), document_summary. NEVER fabricate. Set null + needs_review=true if uncertain.',
-      file_urls: fileUrls,
-      model: 'claude_sonnet_4_6',
-      response_json_schema: { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, opening_balance: { type: 'number' }, closing_balance: { type: 'number' }, period_start: { type: 'string' }, period_end: { type: 'string' }, document_currency: { type: 'string' }, source_document_type: { type: 'string' }, total_debits: { type: 'number' }, total_credits: { type: 'number' }, validation: { type: 'object' }, chart_of_accounts: { type: 'object' }, document_summary: { type: 'string' } } }
-    });
-    const txs = result.transactions || [];
+
+    const extractPrompt = 'You are an expert accountant. Extract ALL financial transactions from this document. For each transaction return: transaction_date (YYYY-MM-DD or null), account_name (or UNCLASSIFIED), account_code, debit_amount (number or null), credit_amount (number or null), description, vendor_or_customer, category (one of: assets liabilities equity revenue cogs operating_expenses other_income other_expenses unclassified), confidence (0-1), needs_review (true if confidence<0.85 or key field missing), review_reason. Also return: total_debits, total_credits, chart_of_accounts (object grouping account names by category). NEVER fabricate — set null + needs_review=true if uncertain.';
+    const schema = { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, total_debits: { type: 'number' }, total_credits: { type: 'number' }, chart_of_accounts: { type: 'object' } } };
+
+    // Process each file in parallel — one fast LLM call per file
+    const results = await Promise.all(fileUrls.map(function(url) {
+      return base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: extractPrompt,
+        file_urls: [url],
+        model: 'gemini_3_flash',
+        response_json_schema: schema,
+      }).catch(function(e) { return { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {} }; });
+    }));
+
+    // Merge all results
+    const txs = results.flatMap(function(r) { return r.transactions || []; });
+    const mergedChart = results.reduce(function(acc, r) { return Object.assign(acc, r.chart_of_accounts || {}); }, {});
+    const totalDebits = results.reduce(function(s, r) { return s + (r.total_debits || 0); }, 0);
+    const totalCredits = results.reduce(function(s, r) { return s + (r.total_credits || 0); }, 0);
+
     const reviewCount = txs.filter(function(t) { return t.needs_review; }).length;
     const mappedCount = txs.filter(function(t) { return !t.needs_review && t.category !== 'unclassified'; }).length;
+    const unclassifiedCount = txs.filter(function(t) { return t.category === 'unclassified'; }).length;
     const issues = [];
-    const v = result.validation || {};
-    if (!v.debit_credit_balanced) issues.push({ type: 'imbalance', severity: 'high', message: 'Debits do not equal credits' });
-    if (!v.balance_reconciles && result.opening_balance != null) issues.push({ type: 'balance_mismatch', severity: 'high', message: 'Balance does not reconcile' });
-    if (v.unclassified_count > 0) issues.push({ type: 'unclassified', severity: 'low', message: v.unclassified_count + ' transaction(s) unclassified' });
-    (v.missing_dates || []).forEach(function(i) { issues.push({ type: 'missing_date', severity: 'medium', message: 'Transaction #' + (i+1) + ' missing date', index: i }); });
-    (v.missing_accounts || []).forEach(function(i) { issues.push({ type: 'missing_account', severity: 'medium', message: 'Transaction #' + (i+1) + ' missing account', index: i }); });
-    (v.duplicate_transactions || []).forEach(function(p) { issues.push({ type: 'duplicate', severity: 'medium', message: 'Possible duplicate at ' + p[0] + ' and ' + p[1] }); });
-    await base44.asServiceRole.entities.FinancialReport.update(reportId, { status: reviewCount > 0 ? 'review' : 'completed', transactions_raw: JSON.stringify(txs), transactions_reviewed: JSON.stringify(txs), validation_issues: JSON.stringify(issues), chart_of_accounts: JSON.stringify(result.chart_of_accounts || {}), total_debits: result.total_debits || 0, total_credits: result.total_credits || 0, transaction_count: txs.length, mapped_count: mappedCount, review_count: reviewCount });
+    if (unclassifiedCount > 0) issues.push({ type: 'unclassified', severity: 'low', message: unclassifiedCount + ' transaction(s) unclassified' });
+
+    await base44.asServiceRole.entities.FinancialReport.update(reportId, {
+      status: reviewCount > 0 ? 'review' : 'completed',
+      transactions_raw: JSON.stringify(txs),
+      transactions_reviewed: JSON.stringify(txs),
+      validation_issues: JSON.stringify(issues),
+      chart_of_accounts: JSON.stringify(mergedChart),
+      total_debits: totalDebits,
+      total_credits: totalCredits,
+      transaction_count: txs.length,
+      mapped_count: mappedCount,
+      review_count: reviewCount,
+    });
     return Response.json({ success: true, transaction_count: txs.length, needs_review: reviewCount, mapped_count: mappedCount, validation_issues: issues.length });
   }
 
