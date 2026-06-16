@@ -6,6 +6,15 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const body = await req.json();
 
+  // Entity automation trigger: fired when a new FinancialReport is created
+  if (body.event?.type === 'create' && body.event?.entity_name === 'FinancialReport') {
+    const rec = body.data;
+    if (!rec || rec.status !== 'extracting') return Response.json({ skipped: true });
+    const fileUrls = JSON.parse(rec.file_urls || '[]');
+    const fileNames = JSON.parse(rec.file_names || '[]');
+    body = { mode: 'financial_report', file_urls: fileUrls, file_names: fileNames, report_id: rec.id };
+  }
+
   if (body.mode === 'financial_report') {
     const fileUrls = body.file_urls || [];
     const fileNames = body.file_names || [];

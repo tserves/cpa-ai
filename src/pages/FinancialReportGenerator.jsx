@@ -121,7 +121,7 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
     setSessionName('');
     setFiles([]);
     toast({ title: 'Upload started — extracting financial data…' });
-    onCreated(record, fileUrls, fileNames);
+    onCreated(record);
   };
 
   return (
@@ -552,18 +552,10 @@ export default function FinancialReportGenerator() {
     toast({ title: 'Session deleted' });
   };
 
-  const handleCreated = async (record, fileUrls, fileNames) => {
+  const handleCreated = async (record) => {
     queryClient.invalidateQueries({ queryKey: ['financial-reports'] });
     setActiveSession(record);
-    // Trigger extraction via the processFinancialDocument function (financial_report mode)
-    base44.functions.invoke('processFinancialDocument', {
-      mode: 'financial_report',
-      file_urls: fileUrls,
-      file_names: fileNames,
-      report_id: record.id,
-    }).then(() => {
-      queryClient.invalidateQueries({ queryKey: ['financial-reports'] });
-    });
+    // Extraction is handled automatically by the entity automation
   };
 
   const handleOpenSession = async (session) => {
