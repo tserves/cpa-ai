@@ -105,33 +105,30 @@ Return JSON with:
 
 RULES: Extract every row. Deposits=credit_amount, withdrawals=debit_amount. Skip header/footer/summary rows. NEVER fabricate data.`;
 
-  // 90-second timeout per file to prevent hanging
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 90000);
-  
-  try {
-    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt,
-      file_urls: [url],
-      model: 'gemini_3_flash',
-      response_json_schema: EXTRACTION_SCHEMA,
-    });
-    clearTimeout(timeoutId);
+  // 90-second timeout using Promise.race - guarantees resolution
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout: ${fileName} exceeded 90 seconds`)), 90000);
+  });
 
-    const seen = new Set();
-    const txs = (result.transactions || []).map(tx => {
-      let mapped = applySmartMapping(tx);
-      const key = `${tx.transaction_date}|${tx.debit_amount}|${tx.credit_amount}|${(tx.description||'').substring(0,30)}`;
-      if (seen.has(key)) mapped = { ...mapped, needs_review: true, review_reason: 'Possible duplicate', is_duplicate: true };
-      seen.add(key);
-      return mapped;
-    });
+  const extractPromise = base44.asServiceRole.integrations.Core.InvokeLLM({
+    prompt,
+    file_urls: [url],
+    model: 'gemini_3_flash',
+    response_json_schema: EXTRACTION_SCHEMA,
+  });
 
-    return { ...result, transactions: txs, file_name: fileName };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
-  }
+  const result = await Promise.race([extractPromise, timeoutPromise]);
+
+  const seen = new Set();
+  const txs = (result.transactions || []).map(tx => {
+    let mapped = applySmartMapping(tx);
+    const key = `${tx.transaction_date}|${tx.debit_amount}|${tx.credit_amount}|${(tx.description||'').substring(0,30)}`;
+    if (seen.has(key)) mapped = { ...mapped, needs_review: true, review_reason: 'Possible duplicate', is_duplicate: true };
+    seen.add(key);
+    return mapped;
+  });
+
+  return { ...result, transactions: txs, file_name: fileName };
 }
 
 function reconcile(fileResult, txs) {
