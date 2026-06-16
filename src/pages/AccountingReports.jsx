@@ -128,21 +128,21 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
       status: 'extracting',
     });
 
-    // Kick off extraction directly from the frontend — more reliable than automation
-    base44.functions.invoke('generateAccountingReports', {
-      mode: 'extract',
-      file_urls: fileUrls,
-      file_names: files.map(f => f.name),
-      report_id: record.id,
-    }).catch(() => {
-      // Errors will surface via the status field polling
-    });
-
     setUploading(false);
     onOpenChange(false);
     setSessionName(''); setCompanyName(''); setFiles([]); setUploadProgress(0);
     toast({ title: '🚀 Extraction started', description: `Processing ${files.length} file${files.length !== 1 ? 's' : ''} in the background…` });
     onCreated(record);
+
+    // Kick off extraction after dialog closes — await so errors are caught and status is set to failed
+    base44.functions.invoke('generateAccountingReports', {
+      mode: 'extract',
+      file_urls: fileUrls,
+      file_names: files.map(f => f.name),
+      report_id: record.id,
+    }).catch(async () => {
+      await base44.entities.AccountingReport.update(record.id, { status: 'failed' });
+    });
   };
 
   return (
