@@ -213,7 +213,7 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
 
   const { data: liveSession } = useQuery({
     queryKey: ['accounting-report-detail', initialSession.id],
-    queryFn: async () => { const rows = await base44.entities.AccountingReport.filter({ id: initialSession.id }); return rows[0] || initialSession; },
+    queryFn: async () => { try { const rows = await base44.entities.AccountingReport.filter({ id: initialSession.id }); return rows[0] || initialSession; } catch { return initialSession; } },
     refetchInterval: (q) => { const s = q.state.data?.status || initialSession.status; return ['extracting','generating'].includes(s) ? 1500 : false; },
     initialData: initialSession,
   });
@@ -654,7 +654,7 @@ export default function AccountingReports() {
   };
 
   const handleCreated = (record) => { queryClient.invalidateQueries({ queryKey: ['accounting-reports'] }); setActiveSession(record); };
-  const handleOpenSession = async (session) => { const fresh = await base44.entities.AccountingReport.filter({ id: session.id }); setActiveSession(fresh[0] || session); };
+  const handleOpenSession = async (session) => { try { const fresh = await base44.entities.AccountingReport.filter({ id: session.id }); setActiveSession(fresh[0] || session); } catch { setActiveSession(session); } };
   const handleRefresh = async () => {
     if (!activeSession) return;
     const fresh = await base44.entities.AccountingReport.filter({ id: activeSession.id });
