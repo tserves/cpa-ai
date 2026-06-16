@@ -317,18 +317,36 @@ Deno.serve(async (req) => {
       const { file_urls: fileUrls, file_names: fileNames, report_id: reportId } = body;
       if (!fileUrls?.length || !reportId) return Response.json({ error: 'No files or report_id' }, { status: 400 });
 
-      const progress = fileNames.map((name, i) => ({ name, index: i, status: 'processing', file_type: detectFileType(name) }));
-      await base44.asServiceRole.entities.AccountingReport.update(reportId, { status: 'extracting', file_progress: JSON.stringify(progress) });
+      const progress = fileNames.map((name, i) => ({ name, index: i, status: 'pending', file_type: detectFileType(name), tx_count: 0 }));
+      await base44.asServiceRole.entities.AccountingReport.update(reportId, { status: 'extracting', file_progress: JSON.stringify(progress), transaction_count: 0 });
 
-      const results = await Promise.all(
-        fileUrls.map((url, i) =>
-          extractSingleFile(base44, url, fileNames[i])
-            .then(r => { progress[i].status = 'done'; progress[i].tx_count = r.transactions.length; progress[i].confidence = r.confidence_score; return r; })
-            .catch(e => { progress[i].status = 'failed'; progress[i].error = e.message; return { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {}, file_name: fileNames[i], error: e.message, confidence_score: 0 }; })
-        )
-      );
+      // Process files sequentially and write progress after each one so the UI sees real-time updates
+      const results = [];
+      let runningTxs = [];
+      for (let i = 0; i < fileUrls.length; i++) {
+        progress[i].status = 'processing';
+        await base44.asServiceRole.entities.AccountingReport.update(reportId, { file_progress: JSON.stringify(progress) });
+        let result;
+        try {
+          result = await extractSingleFile(base44, fileUrls[i], fileNames[i]);
+          progress[i].status = 'done';
+          progress[i].tx_count = result.transactions.length;
+          progress[i].confidence = result.confidence_score;
+        } catch (e) {
+          progress[i].status = 'failed';
+          progress[i].error = e.message;
+          result = { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {}, file_name: fileNames[i], error: e.message, confidence_score: 0 };
+        }
+        results.push(result);
+        runningTxs = runningTxs.concat(result.transactions || []);
+        // Write incremental progress so UI shows running transaction count
+        await base44.asServiceRole.entities.AccountingReport.update(reportId, {
+          file_progress: JSON.stringify(progress),
+          transaction_count: runningTxs.length,
+        });
+      }
 
-      const txs = results.flatMap(r => r.transactions || []);
+      const txs = runningTxs;
       const mergedChart = results.reduce((acc, r) => Object.assign(acc, r.chart_of_accounts || {}), {});
       const { issues, totalDebits, totalCredits } = buildValidationIssues(txs, results);
       const reviewCount = txs.filter(t => t.needs_review).length;

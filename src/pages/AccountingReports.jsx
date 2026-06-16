@@ -131,16 +131,21 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
     setUploading(false);
     onOpenChange(false);
     setSessionName(''); setCompanyName(''); setFiles([]); setUploadProgress(0);
-    toast({ title: '🚀 Extraction started', description: `Processing ${files.length} file${files.length !== 1 ? 's' : ''} in the background…` });
+    toast({ title: '🚀 Extraction started', description: `Processing ${files.length} file${files.length !== 1 ? 's' : ''} in the background…`, duration: 5000 });
     onCreated(record);
 
-    // Kick off extraction after dialog closes — await so errors are caught and status is set to failed
-    base44.functions.invoke('generateAccountingReports', {
-      mode: 'extract',
-      file_urls: fileUrls,
-      file_names: files.map(f => f.name),
-      report_id: record.id,
-    }).catch(async () => {
+    // Kick off extraction — if it times out or errors, mark as failed so UI doesn't hang
+    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS));
+    Promise.race([
+      base44.functions.invoke('generateAccountingReports', {
+        mode: 'extract',
+        file_urls: fileUrls,
+        file_names: files.map(f => f.name),
+        report_id: record.id,
+      }),
+      timeoutPromise,
+    ]).catch(async () => {
       await base44.entities.AccountingReport.update(record.id, { status: 'failed' });
     });
   };
@@ -209,7 +214,7 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
   const { data: liveSession } = useQuery({
     queryKey: ['accounting-report-detail', initialSession.id],
     queryFn: async () => { const rows = await base44.entities.AccountingReport.filter({ id: initialSession.id }); return rows[0] || initialSession; },
-    refetchInterval: (q) => { const s = q.state.data?.status || initialSession.status; return ['extracting','generating'].includes(s) ? 2500 : false; },
+    refetchInterval: (q) => { const s = q.state.data?.status || initialSession.status; return ['extracting','generating'].includes(s) ? 1500 : false; },
     initialData: initialSession,
   });
   const session = liveSession || initialSession;
@@ -252,7 +257,7 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
     });
     setSaving(false);
     onRefresh();
-    toast({ title: '✅ Review saved' });
+    toast({ title: '✅ Review saved', duration: 5000 });
   };
 
   const handleGenerate = async () => {
@@ -266,11 +271,11 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
     setGenerating(false);
     onRefresh();
     if (res.data?.success) {
-      toast({ title: `✅ ${res.data.generated.length} report${res.data.generated.length !== 1 ? 's' : ''} generated` });
+      toast({ title: `✅ ${res.data.generated.length} report${res.data.generated.length !== 1 ? 's' : ''} generated`, duration: 5000 });
       setActiveTab('gl');
       queryClient.invalidateQueries({ queryKey: ['accounting-report-detail', session.id] });
     } else {
-      toast({ title: 'Generation failed', variant: 'destructive' });
+      toast({ title: 'Generation failed', variant: 'destructive', duration: 5000 });
     }
   };
 
@@ -304,7 +309,7 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
       rows.push(['','TOTALS','','',trialBalance.total_debits,trialBalance.total_credits,'']);
       downloadCSV(rows, `TrialBalance_${session.session_name}.csv`);
     }
-    toast({ title: `${type.replace(/_/g,' ')} exported as CSV` });
+    toast({ title: `${type.replace(/_/g,' ')} exported as CSV`, duration: 5000 });
   };
 
   const toggleReport = (id) => setSelectedReports(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id]);
@@ -623,8 +628,8 @@ export default function AccountingReports() {
         const isDone = ['review','completed','failed'].includes(data?.status);
         if (wasProcessing && isDone) {
           const name = data.session_name || 'Session';
-          if (data.status === 'failed') toast({ title: `❌ ${name} — processing failed`, variant: 'destructive' });
-          else toast({ title: `✅ ${name} — extraction complete`, description: `${data.transaction_count || 0} transactions extracted · ${data.confidence_score || 0}% confidence` });
+          if (data.status === 'failed') toast({ title: `❌ ${name} — processing failed`, variant: 'destructive', duration: 5000 });
+          else toast({ title: `✅ ${name} — extraction complete`, description: `${data.transaction_count || 0} transactions extracted · ${data.confidence_score || 0}% confidence`, duration: 5000 });
           queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
         }
       }
@@ -637,7 +642,7 @@ export default function AccountingReports() {
     queryFn: () => base44.entities.AccountingReport.list('-created_date'),
     refetchInterval: (q) => {
       const data = q.state.data;
-      return Array.isArray(data) && data.some(s => ['extracting','generating'].includes(s.status)) ? 4000 : false;
+      return Array.isArray(data) && data.some(s => ['extracting','generating'].includes(s.status)) ? 1500 : false;
     },
   });
 
@@ -645,7 +650,7 @@ export default function AccountingReports() {
     queryClient.setQueryData(['accounting-reports'], (old) => (old || []).filter(s => s.id !== id));
     await base44.entities.AccountingReport.delete(id);
     queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
-    toast({ title: 'Session deleted' });
+    toast({ title: 'Session deleted', duration: 5000 });
   };
 
   const handleCreated = (record) => { queryClient.invalidateQueries({ queryKey: ['accounting-reports'] }); setActiveSession(record); };
