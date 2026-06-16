@@ -317,59 +317,76 @@ Deno.serve(async (req) => {
       if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // ── EXTRACT ──────────────────────────────────────────────────────────────
-    if (body.mode === 'extract') {
-      const { file_urls: fileUrls, file_names: fileNames, report_id: reportId } = body;
-      if (!fileUrls?.length || !reportId) return Response.json({ error: 'No files or report_id' }, { status: 400 });
+    // ── EXTRACT ONE FILE ─────────────────────────────────────────────────────
+    // Called once per file to stay well under the 90s platform timeout.
+    // The frontend sequences these calls and finalises when all files are done.
+    if (body.mode === 'extract_file') {
+      const { file_url, file_name, report_id: reportId, file_index, file_progress: progressIn, existing_transactions: existingTxsRaw } = body;
+      if (!file_url || !reportId) return Response.json({ error: 'Missing file_url or report_id' }, { status: 400 });
 
-      const progress = fileNames.map((name, i) => ({ name, index: i, status: 'pending', file_type: detectFileType(name), tx_count: 0 }));
-      await base44.asServiceRole.entities.AccountingReport.update(reportId, { status: 'extracting', file_progress: JSON.stringify(progress), transaction_count: 0 });
-
-      // Process files sequentially and write progress after each one so the UI sees real-time updates
-      const results = [];
-      let runningTxs = [];
-      for (let i = 0; i < fileUrls.length; i++) {
-        progress[i].status = 'processing';
+      const progress = progressIn ? JSON.parse(progressIn) : [];
+      if (progress[file_index]) {
+        progress[file_index].status = 'processing';
         await base44.asServiceRole.entities.AccountingReport.update(reportId, { file_progress: JSON.stringify(progress) });
-        let result;
-        try {
-          result = await extractSingleFile(base44, fileUrls[i], fileNames[i]);
-          progress[i].status = 'done';
-          progress[i].tx_count = result.transactions.length;
-          progress[i].confidence = result.confidence_score;
-        } catch (e) {
-          progress[i].status = 'failed';
-          progress[i].error = e.message;
-          result = { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {}, file_name: fileNames[i], error: e.message, confidence_score: 0 };
-        }
-        results.push(result);
-        runningTxs = runningTxs.concat(result.transactions || []);
-        // Write incremental progress so UI shows running transaction count
-        await base44.asServiceRole.entities.AccountingReport.update(reportId, {
-          file_progress: JSON.stringify(progress),
-          transaction_count: runningTxs.length,
-        });
       }
 
-      const txs = runningTxs;
-      const mergedChart = results.reduce((acc, r) => Object.assign(acc, r.chart_of_accounts || {}), {});
-      const { issues, totalDebits, totalCredits } = buildValidationIssues(txs, results);
+      let result;
+      try {
+        result = await extractSingleFile(base44, file_url, file_name);
+        if (progress[file_index]) {
+          progress[file_index].status = 'done';
+          progress[file_index].tx_count = result.transactions.length;
+          progress[file_index].confidence = result.confidence_score;
+        }
+      } catch (e) {
+        result = { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {}, file_name, error: e.message, confidence_score: 0 };
+        if (progress[file_index]) { progress[file_index].status = 'failed'; progress[file_index].error = e.message; }
+      }
+
+      const existingTxs = existingTxsRaw ? JSON.parse(existingTxsRaw) : [];
+      const runningTxs = existingTxs.concat(result.transactions || []);
+
+      await base44.asServiceRole.entities.AccountingReport.update(reportId, {
+        file_progress: JSON.stringify(progress),
+        transaction_count: runningTxs.length,
+        transactions_raw: JSON.stringify(runningTxs),
+      });
+
+      return Response.json({
+        success: true,
+        file_result: {
+          file_name, document_type: result.document_type, statement_type: result.statement_type,
+          company_name: result.company_name, period_start: result.period_start, period_end: result.period_end,
+          opening_balance: result.opening_balance, closing_balance: result.closing_balance,
+          document_summary: result.document_summary, tx_count: result.transactions.length,
+          confidence_score: result.confidence_score, error: result.error || null,
+          chart_of_accounts: result.chart_of_accounts || {},
+        },
+        transactions: result.transactions || [],
+        progress: JSON.stringify(progress),
+      });
+    }
+
+    // ── FINALISE EXTRACTION ───────────────────────────────────────────────────
+    // Called once after all files are done to compute validation + set status=review
+    if (body.mode === 'finalise') {
+      const { report_id: reportId, all_transactions: allTxsRaw, file_results: fileResultsRaw, file_progress: progressIn } = body;
+      if (!reportId) return Response.json({ error: 'Missing report_id' }, { status: 400 });
+
+      const txs = JSON.parse(allTxsRaw || '[]');
+      const fileResults = JSON.parse(fileResultsRaw || '[]');
+      const progress = JSON.parse(progressIn || '[]');
+
+      const mergedChart = fileResults.reduce((acc, r) => Object.assign(acc, r.chart_of_accounts || {}), {});
+      const { issues, totalDebits, totalCredits } = buildValidationIssues(txs, fileResults);
       const reviewCount = txs.filter(t => t.needs_review).length;
       const autoApproved = txs.filter(t => !t.needs_review).length;
-      const avgConfidence = results.length > 0 ? Math.round(results.reduce((s, r) => s + (r.confidence_score || 0), 0) / results.length) : 0;
-      const companyName = results.find(r => r.company_name)?.company_name || null;
-      const currency = results.find(r => r.currency)?.currency || 'CAD';
-      const accountingBasis = results.find(r => r.accounting_basis && r.accounting_basis !== 'unknown')?.accounting_basis || 'unknown';
-      const dateFrom = results.map(r => r.period_start).filter(Boolean).sort()[0] || null;
-      const dateTo = results.map(r => r.period_end).filter(Boolean).sort().reverse()[0] || null;
-
-      const fileMetadata = results.map(r => ({
-        file_name: r.file_name, document_type: r.document_type, statement_type: r.statement_type,
-        company_name: r.company_name, period_start: r.period_start, period_end: r.period_end,
-        opening_balance: r.opening_balance, closing_balance: r.closing_balance,
-        document_summary: r.document_summary, tx_count: (r.transactions || []).length,
-        confidence_score: r.confidence_score, error: r.error || null,
-      }));
+      const avgConfidence = fileResults.length > 0 ? Math.round(fileResults.reduce((s, r) => s + (r.confidence_score || 0), 0) / fileResults.length) : 0;
+      const companyName = fileResults.find(r => r.company_name)?.company_name || null;
+      const currency = fileResults.find(r => r.currency)?.currency || 'CAD';
+      const accountingBasis = fileResults.find(r => r.accounting_basis && r.accounting_basis !== 'unknown')?.accounting_basis || 'unknown';
+      const dateFrom = fileResults.map(r => r.period_start).filter(Boolean).sort()[0] || null;
+      const dateTo = fileResults.map(r => r.period_end).filter(Boolean).sort().reverse()[0] || null;
 
       await base44.asServiceRole.entities.AccountingReport.update(reportId, {
         status: 'review',
@@ -384,7 +401,7 @@ Deno.serve(async (req) => {
         review_count: reviewCount,
         auto_approved_count: autoApproved,
         confidence_score: avgConfidence,
-        file_metadata: JSON.stringify(fileMetadata),
+        file_metadata: JSON.stringify(fileResults),
         company_name: companyName,
         currency,
         accounting_basis: accountingBasis,
@@ -392,7 +409,7 @@ Deno.serve(async (req) => {
         date_to: dateTo,
       });
 
-      return Response.json({ success: true, transaction_count: txs.length, needs_review: reviewCount, confidence: avgConfidence });
+      return Response.json({ success: true, transaction_count: txs.length, needs_review: reviewCount });
     }
 
 

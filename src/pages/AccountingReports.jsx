@@ -130,24 +130,52 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
 
     setUploading(false);
     onOpenChange(false);
+    const fileNames = files.map(f => f.name);
     setSessionName(''); setCompanyName(''); setFiles([]); setUploadProgress(0);
-    toast({ title: '🚀 Extraction started', description: `Processing ${files.length} file${files.length !== 1 ? 's' : ''} in the background…`, duration: 5000 });
+    toast({ title: '🚀 Extraction started', description: `Processing ${fileNames.length} file${fileNames.length !== 1 ? 's' : ''} in the background…`, duration: 5000 });
     onCreated(record);
 
-    // Kick off extraction — if it times out or errors, mark as failed so UI doesn't hang
-    const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS));
-    Promise.race([
-      base44.functions.invoke('generateAccountingReports', {
-        mode: 'extract',
-        file_urls: fileUrls,
-        file_names: files.map(f => f.name),
-        report_id: record.id,
-      }),
-      timeoutPromise,
-    ]).catch(async () => {
-      await base44.entities.AccountingReport.update(record.id, { status: 'failed' });
-    });
+    // Process one file at a time (each call stays under the 90s platform timeout)
+    (async () => {
+      try {
+        let progress = fileNames.map((name, i) => ({ name, index: i, status: 'pending', file_type: name.split('.').pop().toLowerCase(), tx_count: 0 }));
+        await base44.entities.AccountingReport.update(record.id, { status: 'extracting', file_progress: JSON.stringify(progress), transaction_count: 0 });
+
+        const fileResults = [];
+        let allTransactions = [];
+
+        for (let i = 0; i < fileUrls.length; i++) {
+          const res = await base44.functions.invoke('generateAccountingReports', {
+            mode: 'extract_file',
+            report_id: record.id,
+            file_url: fileUrls[i],
+            file_name: fileNames[i],
+            file_index: i,
+            file_progress: JSON.stringify(progress),
+            existing_transactions: JSON.stringify(allTransactions),
+          });
+          if (res.data?.success) {
+            allTransactions = allTransactions.concat(res.data.transactions || []);
+            fileResults.push(res.data.file_result);
+            progress = JSON.parse(res.data.progress || JSON.stringify(progress));
+          } else {
+            progress[i] = { ...progress[i], status: 'failed', error: res.data?.error || 'Unknown error' };
+            fileResults.push({ file_name: fileNames[i], tx_count: 0, confidence_score: 0, error: res.data?.error });
+          }
+        }
+
+        // Finalise — compute validation + set status to review
+        await base44.functions.invoke('generateAccountingReports', {
+          mode: 'finalise',
+          report_id: record.id,
+          all_transactions: JSON.stringify(allTransactions),
+          file_results: JSON.stringify(fileResults),
+          file_progress: JSON.stringify(progress),
+        });
+      } catch (err) {
+        await base44.entities.AccountingReport.update(record.id, { status: 'failed' }).catch(() => {});
+      }
+    })();
   };
 
   return (
