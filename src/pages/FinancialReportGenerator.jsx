@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card } from '@/components/ui/card';
@@ -161,17 +161,44 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
 }
 
 // ─── Session Detail View ──────────────────────────────────────────────────────
-function SessionDetail({ session, onBack, onRefresh }) {
+function SessionDetail({ session: initialSession, onBack, onRefresh }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [generating, setGenerating] = useState(false);
-  const [transactions, setTransactions] = useState(() => {
-    try { return JSON.parse(session.transactions_reviewed || session.transactions_raw || '[]'); } catch { return []; }
-  });
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Auto-poll while extracting/generating
+  const { data: liveSession } = useQuery({
+    queryKey: ['financial-report-detail', initialSession.id],
+    queryFn: async () => {
+      const rows = await base44.entities.FinancialReport.filter({ id: initialSession.id });
+      return rows[0] || initialSession;
+    },
+    refetchInterval: (query) => {
+      const s = query.state.data?.status || initialSession.status;
+      return (s === 'extracting' || s === 'generating') ? 3000 : false;
+    },
+    initialData: initialSession,
+  });
+
+  const session = liveSession || initialSession;
+
+  const [transactions, setTransactions] = useState(() => {
+    try { return JSON.parse(session.transactions_reviewed || session.transactions_raw || '[]'); } catch { return []; }
+  });
+
+  // Sync transactions when extraction completes
+  useEffect(() => {
+    if (session.status !== 'extracting' && (session.transactions_reviewed || session.transactions_raw)) {
+      try {
+        const parsed = JSON.parse(session.transactions_reviewed || session.transactions_raw || '[]');
+        setTransactions(parsed);
+      } catch {}
+    }
+  }, [session.status, session.transactions_reviewed, session.transactions_raw]);
 
   const validationIssues = (() => { try { return JSON.parse(session.validation_issues || '[]'); } catch { return []; } })();
   const glReport = (() => { try { return session.gl_report ? JSON.parse(session.gl_report) : null; } catch { return null; } })();
