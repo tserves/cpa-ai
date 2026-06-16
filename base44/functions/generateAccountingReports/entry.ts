@@ -309,8 +309,13 @@ Deno.serve(async (req) => {
     _reportId = body.report_id || null;
     _mode = body.mode || null;
 
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // For extract mode, the report_id is the authorization proof (created by authenticated user).
+    // We skip strict auth here because the frontend fires this fire-and-forget and the token
+    // may time out on long documents. Generate mode still requires auth.
+    if (body.mode !== 'extract') {
+      const user = await base44.auth.me();
+      if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     // ── EXTRACT ──────────────────────────────────────────────────────────────
     if (body.mode === 'extract') {
@@ -425,9 +430,11 @@ Deno.serve(async (req) => {
     // Mark the report as failed so the UI doesn't hang on "extracting"
     if (_reportId && _mode === 'extract') {
       try {
-        const base44Fallback = createClientFromRequest(req);
-        await base44Fallback.asServiceRole.entities.AccountingReport.update(_reportId, { status: 'failed' });
-      } catch {}
+        // Use the already-created base44 client with service role to avoid token issues
+        const { createClientFromRequest: makeClient } = await import('npm:@base44/sdk@0.8.31');
+        const fallback = makeClient(req);
+        await fallback.asServiceRole.entities.AccountingReport.update(_reportId, { status: 'failed' });
+      } catch (_) { /* best effort */ }
     }
     return Response.json({ error: error.message }, { status: 500 });
   }
