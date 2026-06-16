@@ -18,6 +18,14 @@
       "type": "string",
       "description": "JSON array of uploaded file URLs"
     },
+    "file_progress": {
+      "type": "string",
+      "description": "JSON array of per-file extraction progress"
+    },
+    "file_metadata": {
+      "type": "string",
+      "description": "JSON array of per-file metadata (period, balances, type)"
+    },
     "upload_date": {
       "type": "string",
       "description": "ISO timestamp of upload"
@@ -73,6 +81,9 @@
     "review_count": {
       "type": "number"
     },
+    "auto_approved_count": {
+      "type": "number"
+    },
     "gl_generated_at": {
       "type": "string"
     },
@@ -82,10 +93,6 @@
     "export_history": {
       "type": "string",
       "description": "JSON array of export log entries"
-    },
-    "manual_edits": {
-      "type": "string",
-      "description": "JSON array of manual edits made"
     },
     "notes": {
       "type": "string"
