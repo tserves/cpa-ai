@@ -301,28 +301,21 @@ function buildCustomerLedger(txs) {
 }
 
 Deno.serve(async (req) => {
+  let _reportId = null;
+  let _mode = null;
   try {
     const base44 = createClientFromRequest(req);
-    let body = await req.json();
-    let isAutomation = false;
+    const body = await req.json();
+    _reportId = body.report_id || null;
+    _mode = body.mode || null;
 
-    // Entity automation trigger
-    if (body.event?.type === 'create' && body.event?.entity_name === 'AccountingReport') {
-      const rec = body.data;
-      if (!rec || rec.status !== 'extracting') return Response.json({ skipped: true });
-      body = { mode: 'extract', file_urls: JSON.parse(rec.file_urls || '[]'), file_names: JSON.parse(rec.file_names || '[]'), report_id: rec.id };
-      isAutomation = true;
-    }
-
-    if (!isAutomation) {
-      const user = await base44.auth.me();
-      if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     // ── EXTRACT ──────────────────────────────────────────────────────────────
     if (body.mode === 'extract') {
       const { file_urls: fileUrls, file_names: fileNames, report_id: reportId } = body;
-      if (!fileUrls?.length) return Response.json({ error: 'No files' }, { status: 400 });
+      if (!fileUrls?.length || !reportId) return Response.json({ error: 'No files or report_id' }, { status: 400 });
 
       const progress = fileNames.map((name, i) => ({ name, index: i, status: 'processing', file_type: detectFileType(name) }));
       await base44.asServiceRole.entities.AccountingReport.update(reportId, { status: 'extracting', file_progress: JSON.stringify(progress) });
@@ -379,6 +372,7 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, transaction_count: txs.length, needs_review: reviewCount, confidence: avgConfidence });
     }
 
+
     // ── GENERATE REPORTS ─────────────────────────────────────────────────────
     if (body.mode === 'generate') {
       const { report_id: reportId, report_types, date_from: dateFrom, date_to: dateTo } = body;
@@ -410,6 +404,13 @@ Deno.serve(async (req) => {
 
     return Response.json({ error: 'Unknown mode' }, { status: 400 });
   } catch (error) {
+    // Mark the report as failed so the UI doesn't hang on "extracting"
+    if (_reportId && _mode === 'extract') {
+      try {
+        const base44Fallback = createClientFromRequest(req);
+        await base44Fallback.asServiceRole.entities.AccountingReport.update(_reportId, { status: 'failed' });
+      } catch {}
+    }
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

@@ -127,6 +127,17 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
       currency,
       status: 'extracting',
     });
+
+    // Kick off extraction directly from the frontend — more reliable than automation
+    base44.functions.invoke('generateAccountingReports', {
+      mode: 'extract',
+      file_urls: fileUrls,
+      file_names: files.map(f => f.name),
+      report_id: record.id,
+    }).catch(() => {
+      // Errors will surface via the status field polling
+    });
+
     setUploading(false);
     onOpenChange(false);
     setSessionName(''); setCompanyName(''); setFiles([]); setUploadProgress(0);
