@@ -1,0 +1,142 @@
+{
+  "name": "AccountingReport",
+  "type": "object",
+  "properties": {
+    "session_name": {
+      "type": "string"
+    },
+    "company_name": {
+      "type": "string"
+    },
+    "uploaded_by": {
+      "type": "string"
+    },
+    "file_names": {
+      "type": "string",
+      "description": "JSON array of file names"
+    },
+    "file_urls": {
+      "type": "string",
+      "description": "JSON array of file URLs"
+    },
+    "file_progress": {
+      "type": "string",
+      "description": "JSON array of per-file progress"
+    },
+    "file_metadata": {
+      "type": "string",
+      "description": "JSON array of per-file metadata"
+    },
+    "upload_date": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "uploading",
+        "extracting",
+        "review",
+        "generating",
+        "completed",
+        "failed"
+      ],
+      "default": "uploading"
+    },
+    "accounting_basis": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "accrual",
+        "unknown"
+      ],
+      "default": "unknown"
+    },
+    "currency": {
+      "type": "string",
+      "default": "CAD"
+    },
+    "date_from": {
+      "type": "string"
+    },
+    "date_to": {
+      "type": "string"
+    },
+    "transactions_raw": {
+      "type": "string",
+      "description": "JSON array of all extracted transactions"
+    },
+    "transactions_reviewed": {
+      "type": "string",
+      "description": "JSON array of user-reviewed transactions"
+    },
+    "validation_issues": {
+      "type": "string",
+      "description": "JSON array of validation flags"
+    },
+    "chart_of_accounts": {
+      "type": "string",
+      "description": "JSON object of account classifications"
+    },
+    "total_debits": {
+      "type": "number"
+    },
+    "total_credits": {
+      "type": "number"
+    },
+    "transaction_count": {
+      "type": "number"
+    },
+    "review_count": {
+      "type": "number"
+    },
+    "auto_approved_count": {
+      "type": "number"
+    },
+    "confidence_score": {
+      "type": "number",
+      "description": "Overall extraction confidence 0-100"
+    },
+    "gl_report": {
+      "type": "string",
+      "description": "JSON of generated GL report"
+    },
+    "pl_report": {
+      "type": "string",
+      "description": "JSON of generated P&L report"
+    },
+    "trial_balance": {
+      "type": "string",
+      "description": "JSON of trial balance"
+    },
+    "balance_sheet": {
+      "type": "string",
+      "description": "JSON of balance sheet"
+    },
+    "transaction_summary": {
+      "type": "string",
+      "description": "JSON of transaction summary"
+    },
+    "vendor_ledger": {
+      "type": "string",
+      "description": "JSON of vendor ledger"
+    },
+    "customer_ledger": {
+      "type": "string",
+      "description": "JSON of customer ledger"
+    },
+    "reports_generated": {
+      "type": "string",
+      "description": "JSON array of generated report types"
+    },
+    "export_history": {
+      "type": "string",
+      "description": "JSON array of export log entries"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_name"
+  ]
+}
