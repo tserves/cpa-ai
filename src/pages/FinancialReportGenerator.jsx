@@ -568,6 +568,7 @@ export default function FinancialReportGenerator() {
   });
 
   const handleDelete = async (id) => {
+    queryClient.setQueryData(['financial-reports'], (old) => (old || []).filter(s => s.id !== id));
     await base44.entities.FinancialReport.delete(id);
     queryClient.invalidateQueries({ queryKey: ['financial-reports'] });
     toast({ title: 'Session deleted' });
