@@ -512,8 +512,9 @@ export default function FinancialReportGenerator() {
   const { data: sessions = [], isLoading, refetch } = useQuery({
     queryKey: ['financial-reports'],
     queryFn: () => base44.entities.FinancialReport.list('-created_date'),
-    refetchInterval: (data) => {
-      const hasActive = (data || []).some(s => s.status === 'extracting' || s.status === 'generating');
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasActive = Array.isArray(data) && data.some(s => s.status === 'extracting' || s.status === 'generating');
       return hasActive ? 5000 : false;
     },
   });
