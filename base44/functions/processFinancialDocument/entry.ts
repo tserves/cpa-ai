@@ -4,7 +4,7 @@ Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  const body = await req.json();
+  let body = await req.json();
 
   // Entity automation trigger: fired when a new FinancialReport is created
   if (body.event?.type === 'create' && body.event?.entity_name === 'FinancialReport') {
@@ -25,21 +25,33 @@ Deno.serve(async (req) => {
     const extractPrompt = 'You are an expert accountant. Extract ALL financial transactions from this document. For each transaction return: transaction_date (YYYY-MM-DD or null), account_name (or UNCLASSIFIED), account_code, debit_amount (number or null), credit_amount (number or null), description, vendor_or_customer, category (one of: assets liabilities equity revenue cogs operating_expenses other_income other_expenses unclassified), confidence (0-1), needs_review (true if confidence<0.85 or key field missing), review_reason. Also return: total_debits, total_credits, chart_of_accounts (object grouping account names by category). NEVER fabricate — set null + needs_review=true if uncertain.';
     const schema = { type: 'object', properties: { transactions: { type: 'array', items: { type: 'object' } }, total_debits: { type: 'number' }, total_credits: { type: 'number' }, chart_of_accounts: { type: 'object' } } };
 
-    // Process each file in parallel — one fast LLM call per file
-    const results = await Promise.all(fileUrls.map(function(url) {
-      return base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: extractPrompt,
-        file_urls: [url],
-        model: 'gemini_3_flash',
-        response_json_schema: schema,
-      }).catch(function(e) { return { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {} }; });
-    }));
+    // Process files in batches of 3 to avoid timeout on large uploads
+    const BATCH_SIZE = 3;
+    const allResults = [];
+    for (let i = 0; i < fileUrls.length; i += BATCH_SIZE) {
+      const batchUrls = fileUrls.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batchUrls.map(function(url) {
+        return base44.asServiceRole.integrations.Core.InvokeLLM({
+          prompt: extractPrompt,
+          file_urls: [url],
+          model: 'gemini_3_flash',
+          response_json_schema: schema,
+        }).catch(function(e) { return { transactions: [], total_debits: 0, total_credits: 0, chart_of_accounts: {} }; });
+      }));
+      allResults.push(...batchResults);
+      // Save partial progress after each batch so status is visible
+      const partialTxs = allResults.flatMap(function(r) { return r.transactions || []; });
+      await base44.asServiceRole.entities.FinancialReport.update(reportId, {
+        transactions_raw: JSON.stringify(partialTxs),
+        transaction_count: partialTxs.length,
+      });
+    }
 
     // Merge all results
-    const txs = results.flatMap(function(r) { return r.transactions || []; });
-    const mergedChart = results.reduce(function(acc, r) { return Object.assign(acc, r.chart_of_accounts || {}); }, {});
-    const totalDebits = results.reduce(function(s, r) { return s + (r.total_debits || 0); }, 0);
-    const totalCredits = results.reduce(function(s, r) { return s + (r.total_credits || 0); }, 0);
+    const txs = allResults.flatMap(function(r) { return r.transactions || []; });
+    const mergedChart = allResults.reduce(function(acc, r) { return Object.assign(acc, r.chart_of_accounts || {}); }, {});
+    const totalDebits = allResults.reduce(function(s, r) { return s + (r.total_debits || 0); }, 0);
+    const totalCredits = allResults.reduce(function(s, r) { return s + (r.total_credits || 0); }, 0);
 
     const reviewCount = txs.filter(function(t) { return t.needs_review; }).length;
     const mappedCount = txs.filter(function(t) { return !t.needs_review && t.category !== 'unclassified'; }).length;
