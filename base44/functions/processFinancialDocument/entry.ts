@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -37,7 +37,8 @@ Deno.serve(async (req) => {
     const reportId = body.report_id;
     const dateFrom = body.date_from || null;
     const dateTo = body.date_to || null;
-    const records = await base44.asServiceRole.entities.FinancialReport.filter({ id: reportId });
+    let records = [];
+    try { records = await base44.asServiceRole.entities.FinancialReport.filter({ id: reportId }); } catch(e) {}
     if (!records || !records.length) return Response.json({ error: 'Report not found' }, { status: 404 });
     const rec = records[0];
     const all = JSON.parse(rec.transactions_reviewed || rec.transactions_raw || '[]');
