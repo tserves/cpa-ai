@@ -13,7 +13,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   BookOpen, BarChart2, Upload, FileText, CheckCircle2, AlertTriangle,
   RefreshCw, Trash2, Eye, Download, Plus, ArrowLeft, Search,
-  TrendingUp, Zap, XCircle, Shield, History, Building2, Info
+  TrendingUp, Zap, XCircle, Shield, History, Building2, Scale,
+  Calendar, FileSearch, ListChecks, Info
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import ARUploadZone from '@/components/accounting/ARUploadZone';
@@ -22,34 +23,45 @@ import ARTransactionTable from '@/components/accounting/ARTransactionTable';
 import ARGLReport from '@/components/accounting/ARGLReport';
 import ARPLReport from '@/components/accounting/ARPLReport';
 import ARTrialBalance from '@/components/accounting/ARTrialBalance';
+import ARBankReconciliation from '@/components/accounting/ARBankReconciliation';
+import ARReviewItems from '@/components/accounting/ARReviewItems';
+import ARMonthlySummary from '@/components/accounting/ARMonthlySummary';
 
 const STATUS_CONFIG = {
-  uploading:  { label: 'Uploading',    color: 'bg-blue-100 text-blue-700',    icon: Upload },
-  extracting: { label: 'Extracting',   color: 'bg-purple-100 text-purple-700', icon: RefreshCw },
-  review:     { label: 'Ready',        color: 'bg-amber-100 text-amber-700',  icon: AlertTriangle },
-  generating: { label: 'Generating',   color: 'bg-indigo-100 text-indigo-700', icon: RefreshCw },
-  completed:  { label: 'Completed',    color: 'bg-green-100 text-green-700',  icon: CheckCircle2 },
-  failed:     { label: 'Failed',       color: 'bg-red-100 text-red-700',      icon: XCircle },
+  uploading:  { label: 'Uploading',   color: 'bg-blue-100 text-blue-700',    icon: Upload },
+  extracting: { label: 'Extracting',  color: 'bg-purple-100 text-purple-700', icon: RefreshCw },
+  review:     { label: 'Ready',       color: 'bg-amber-100 text-amber-700',  icon: AlertTriangle },
+  generating: { label: 'Generating',  color: 'bg-indigo-100 text-indigo-700', icon: RefreshCw },
+  completed:  { label: 'Completed',   color: 'bg-green-100 text-green-700',  icon: CheckCircle2 },
+  failed:     { label: 'Failed',      color: 'bg-red-100 text-red-700',      icon: XCircle },
 };
 
 const REPORT_OPTIONS = [
-  { id: 'gl', label: 'General Ledger', icon: BookOpen, desc: 'Full account-by-account ledger with running balances' },
-  { id: 'pl', label: 'Profit & Loss', icon: TrendingUp, desc: 'Revenue, expenses, and net profit/loss statement' },
-  { id: 'trial_balance', label: 'Trial Balance', icon: BarChart2, desc: 'Debit/credit totals per account — checks balance' },
-  { id: 'transaction_summary', label: 'Transaction Summary', icon: FileText, desc: 'Totals grouped by category with counts' },
-  { id: 'vendor_ledger', label: 'Vendor Ledger', icon: Building2, desc: 'Payments by vendor sorted by total paid' },
-  { id: 'customer_ledger', label: 'Customer Ledger', icon: Building2, desc: 'Receipts by customer sorted by total received' },
+  { id: 'gl',             label: 'General Ledger',         icon: BookOpen,     desc: 'Transaction-level ledger by account with running balances' },
+  { id: 'pl',             label: 'Profit & Loss',          icon: TrendingUp,   desc: 'Revenue, COGS, expenses and net income by period' },
+  { id: 'monthly_summary',label: 'Monthly Summary',        icon: Calendar,     desc: 'Month-by-month credits, debits and net cash flow' },
+  { id: 'review_items',   label: 'Review Items',           icon: ListChecks,   desc: 'Flagged transactions requiring manual classification' },
+  { id: 'trial_balance',  label: 'Trial Balance',          icon: Scale,        desc: 'Debit/credit totals per account — checks balance' },
 ];
 
-const CURRENCIES = ['CAD','USD','EUR','GBP','AUD','CHF','JPY','INR'];
+const CURRENCIES = ['CAD','USD','EUR','GBP','AUD'];
 
-// ─── Session Card ──────────────────────────────────────────────────────────────
+// ── CSV Download Helper ───────────────────────────────────────────────────────
+function downloadCSV(rows, filename) {
+  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: filename });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ── Session Card ──────────────────────────────────────────────────────────────
 function SessionCard({ session, onOpen, onDelete }) {
   const sc = STATUS_CONFIG[session.status] || STATUS_CONFIG.uploading;
   const StatusIcon = sc.icon;
-  const isProcessing = ['extracting','uploading','generating'].includes(session.status);
+  const isProcessing = ['extracting', 'uploading', 'generating'].includes(session.status);
   const fileCount = (() => { try { return JSON.parse(session.file_names || '[]').length; } catch { return 0; } })();
   const reportsGenerated = (() => { try { return JSON.parse(session.reports_generated || '[]'); } catch { return []; } })();
+  const reconciliation = (() => { try { return JSON.parse(session.bank_reconciliation || '[]'); } catch { return []; } })();
+  const reconciledAll = reconciliation.length > 0 && reconciliation.every(r => ['reconciled', 'reconciled_with_warnings'].includes(r.status));
 
   return (
     <Card className="p-4 hover:shadow-md transition-shadow">
@@ -67,12 +79,18 @@ function SessionCard({ session, onOpen, onDelete }) {
               </Badge>
               {session.confidence_score > 0 && <span className="text-xs text-blue-600">⬤ {session.confidence_score}% confidence</span>}
               {session.transaction_count > 0 && <span className="text-xs text-muted-foreground">{session.transaction_count} txns</span>}
-              {session.review_count > 0 && <span className="text-xs text-amber-600 font-medium">⚠ {session.review_count} exceptions</span>}
+              {session.review_count > 0 && <span className="text-xs text-amber-600 font-medium">⚠ {session.review_count} review</span>}
+              {reconciliation.length > 0 && (
+                <span className={`text-xs font-medium ${reconciledAll ? 'text-green-600' : 'text-red-600'}`}>
+                  {reconciledAll ? '✓ Reconciled' : '✗ Recon. Issues'}
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               <span className="text-xs text-muted-foreground">{fileCount} file{fileCount !== 1 ? 's' : ''}</span>
               {session.currency && <span className="text-xs text-muted-foreground">{session.currency}</span>}
-              {reportsGenerated.length > 0 && <span className="text-xs text-green-600">{reportsGenerated.length} report{reportsGenerated.length !== 1 ? 's' : ''} generated</span>}
+              {session.date_from && <span className="text-xs text-muted-foreground">{session.date_from} → {session.date_to || '?'}</span>}
+              {reportsGenerated.length > 0 && <span className="text-xs text-green-600">{reportsGenerated.length} reports</span>}
             </div>
           </div>
         </div>
@@ -85,10 +103,10 @@ function SessionCard({ session, onOpen, onDelete }) {
           </Button>
         </div>
       </div>
-      {session.total_debits > 0 && (
+      {(session.total_debits > 0 || session.total_credits > 0) && (
         <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t">
-          <div><p className="text-[10px] text-muted-foreground">Debits</p><p className="text-xs font-mono font-bold text-red-600">${(session.total_debits||0).toFixed(2)}</p></div>
-          <div><p className="text-[10px] text-muted-foreground">Credits</p><p className="text-xs font-mono font-bold text-green-600">${(session.total_credits||0).toFixed(2)}</p></div>
+          <div><p className="text-[10px] text-muted-foreground">Total Debits</p><p className="text-xs font-mono font-bold text-red-600">${(session.total_debits || 0).toFixed(2)}</p></div>
+          <div><p className="text-[10px] text-muted-foreground">Total Credits</p><p className="text-xs font-mono font-bold text-green-600">${(session.total_credits || 0).toFixed(2)}</p></div>
           <div><p className="text-[10px] text-muted-foreground">Basis</p><p className="text-xs font-medium capitalize">{session.accounting_basis || '—'}</p></div>
         </div>
       )}
@@ -96,7 +114,7 @@ function SessionCard({ session, onOpen, onDelete }) {
   );
 }
 
-// ─── New Session Dialog ────────────────────────────────────────────────────────
+// ── New Session Dialog ────────────────────────────────────────────────────────
 function NewSessionDialog({ open, onOpenChange, onCreated }) {
   const [sessionName, setSessionName] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -128,14 +146,14 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
       status: 'extracting',
     });
 
+    const fileNames = files.map(f => f.name);
     setUploading(false);
     onOpenChange(false);
-    const fileNames = files.map(f => f.name);
     setSessionName(''); setCompanyName(''); setFiles([]); setUploadProgress(0);
-    toast({ title: '🚀 Extraction started', description: `Processing ${fileNames.length} file${fileNames.length !== 1 ? 's' : ''} in the background…`, duration: 5000 });
+    toast({ title: '🚀 Extraction started', description: `Processing ${fileNames.length} file(s) — stay on this page for live updates`, duration: 5000 });
     onCreated(record);
 
-    // Process one file at a time (each call stays under the 90s platform timeout)
+    // Process one file at a time to stay under 90s timeout per call
     (async () => {
       try {
         let progress = fileNames.map((name, i) => ({ name, index: i, status: 'pending', file_type: name.split('.').pop().toLowerCase(), tx_count: 0 }));
@@ -164,7 +182,6 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
           }
         }
 
-        // Finalise — compute validation + set status to review
         await base44.functions.invoke('generateAccountingReports', {
           mode: 'finalise',
           report_id: record.id,
@@ -183,7 +200,7 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
       <DialogContent className="max-w-xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-primary" /> New Accounting Report Session
+            <BookOpen className="w-5 h-5 text-primary" /> New Report Session
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2 overflow-y-auto flex-1">
@@ -205,13 +222,13 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
             </Select>
           </div>
           <div>
-            <Label>Upload Documents *</Label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-1.5">Excel, CSV, PDF, scanned images, bank statements, accounting exports</p>
+            <Label>Upload Financial Documents *</Label>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-1.5">PDF bank statements, scanned PDFs, Excel, CSV, OFX/QBO, images</p>
             <ARUploadZone files={files} onFilesChange={setFiles} />
           </div>
           {uploading && (
             <div className="space-y-1.5">
-              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Uploading…</span><span className="font-semibold">{uploadProgress}%</span></div>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Uploading files…</span><span className="font-semibold">{uploadProgress}%</span></div>
               <div className="w-full bg-muted rounded-full h-2"><div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${uploadProgress}%` }} /></div>
             </div>
           )}
@@ -227,28 +244,113 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
   );
 }
 
-// ─── Session Detail ────────────────────────────────────────────────────────────
+// ── Generate Reports Dialog ───────────────────────────────────────────────────
+function GenerateDialog({ open, onOpenChange, session, transactions, onGenerated }) {
+  const [selectedReports, setSelectedReports] = useState(['gl', 'pl', 'monthly_summary', 'review_items', 'trial_balance']);
+  const [dateFrom, setDateFrom] = useState(session?.date_from || '');
+  const [dateTo, setDateTo] = useState(session?.date_to || '');
+  const [includeReview, setIncludeReview] = useState(false);
+  const [includeTransfers, setIncludeTransfers] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const { toast } = useToast();
+
+  const toggle = (id) => setSelectedReports(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id]);
+  const reviewCount = transactions.filter(t => t.needs_review).length;
+
+  const handleGenerate = async () => {
+    if (!selectedReports.length) return;
+    setGenerating(true);
+    await base44.entities.AccountingReport.update(session.id, { status: 'generating' });
+    const res = await base44.functions.invoke('generateAccountingReports', {
+      mode: 'generate',
+      report_id: session.id,
+      report_types: selectedReports,
+      date_from: dateFrom || null,
+      date_to: dateTo || null,
+      options: { include_review: includeReview, include_transfers: includeTransfers },
+    });
+    setGenerating(false);
+    if (res.data?.success) {
+      toast({ title: `✅ ${res.data.generated.length} reports generated`, duration: 5000 });
+      onGenerated(res.data.generated);
+      onOpenChange(false);
+    } else {
+      toast({ title: 'Generation failed', variant: 'destructive', duration: 5000 });
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={generating ? undefined : onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="font-display flex items-center gap-2">
+            <BarChart2 className="w-5 h-5 text-primary" /> Generate Reports
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2 overflow-y-auto flex-1">
+          {reviewCount > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              <span>{reviewCount} transactions flagged for review — excluded from P&L by default unless you opt in below.</span>
+            </div>
+          )}
+          <div>
+            <Label className="text-xs font-semibold">Report Types</Label>
+            <div className="grid grid-cols-1 gap-2 mt-2">
+              {REPORT_OPTIONS.map(opt => (
+                <div key={opt.id} className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${selectedReports.includes(opt.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted/30'}`} onClick={() => toggle(opt.id)}>
+                  <Checkbox checked={selectedReports.includes(opt.id)} onCheckedChange={() => toggle(opt.id)} className="mt-0.5" />
+                  <div><div className="flex items-center gap-1.5"><opt.icon className="w-3.5 h-3.5 text-primary" /><p className="text-xs font-semibold">{opt.label}</p></div><p className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</p></div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label className="text-xs">Date From</Label><Input type="date" className="mt-1 h-9 text-xs" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
+            <div><Label className="text-xs">Date To</Label><Input type="date" className="mt-1 h-9 text-xs" value={dateTo} onChange={e => setDateTo(e.target.value)} /></div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold">P&L Options</Label>
+            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIncludeReview(!includeReview)}>
+              <Checkbox checked={includeReview} onCheckedChange={setIncludeReview} />
+              <span className="text-xs">Include review-flagged transactions in P&L</span>
+            </div>
+            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIncludeTransfers(!includeTransfers)}>
+              <Checkbox checked={includeTransfers} onCheckedChange={setIncludeTransfers} />
+              <span className="text-xs">Include transfers & credit card payments in P&L</span>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={generating}>Cancel</Button>
+          <Button onClick={handleGenerate} disabled={generating || !selectedReports.length || transactions.length === 0}>
+            {generating ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Generating…</> : <><BarChart2 className="w-4 h-4 mr-2" /> Generate {selectedReports.length} Report{selectedReports.length !== 1 ? 's' : ''}</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Session Detail ────────────────────────────────────────────────────────────
 function SessionDetail({ session: initialSession, onBack, onRefresh }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [transactions, setTransactions] = useState(() => { try { return JSON.parse(initialSession.transactions_reviewed || initialSession.transactions_raw || '[]'); } catch { return []; } });
-  const [selectedReports, setSelectedReports] = useState(['gl', 'pl', 'trial_balance']);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [generating, setGenerating] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: liveSession } = useQuery({
-    queryKey: ['accounting-report-detail', initialSession.id],
+    queryKey: ['ar-detail', initialSession.id],
     queryFn: async () => { try { const rows = await base44.entities.AccountingReport.filter({ id: initialSession.id }); return rows[0] || initialSession; } catch { return initialSession; } },
-    refetchInterval: (q) => { const s = q.state.data?.status || initialSession.status; return ['extracting','generating'].includes(s) ? 1500 : false; },
+    refetchInterval: (q) => ['extracting', 'generating'].includes(q.state.data?.status || initialSession.status) ? 1500 : false,
     initialData: initialSession,
   });
   const session = liveSession || initialSession;
 
   useEffect(() => {
-    if (!['extracting','uploading'].includes(session.status)) {
+    if (!['extracting', 'uploading'].includes(session.status)) {
       try {
         const parsed = JSON.parse(session.transactions_reviewed || session.transactions_raw || '[]');
         if (parsed.length > 0) setTransactions(parsed);
@@ -256,20 +358,21 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
     }
   }, [session.status, session.transactions_reviewed, session.transactions_raw]);
 
-  const fileProgress = (() => { try { return JSON.parse(session.file_progress || '[]'); } catch { return []; } })();
-  const fileMetadata = (() => { try { return JSON.parse(session.file_metadata || '[]'); } catch { return []; } })();
-  const validationIssues = (() => { try { return JSON.parse(session.validation_issues || '[]'); } catch { return []; } })();
-  const glReport = (() => { try { return session.gl_report ? JSON.parse(session.gl_report) : null; } catch { return null; } })();
-  const plReport = (() => { try { return session.pl_report ? JSON.parse(session.pl_report) : null; } catch { return null; } })();
-  const trialBalance = (() => { try { return session.trial_balance ? JSON.parse(session.trial_balance) : null; } catch { return null; } })();
-  const txSummary = (() => { try { return session.transaction_summary ? JSON.parse(session.transaction_summary) : null; } catch { return null; } })();
-  const vendorLedger = (() => { try { return session.vendor_ledger ? JSON.parse(session.vendor_ledger) : null; } catch { return null; } })();
-  const fileNames = (() => { try { return JSON.parse(session.file_names || '[]'); } catch { return []; } })();
-  const reportsGenerated = (() => { try { return JSON.parse(session.reports_generated || '[]'); } catch { return []; } })();
+  const parse = (field) => { try { return session[field] ? JSON.parse(session[field]) : null; } catch { return null; } };
+  const fileProgress = parse('file_progress') || [];
+  const fileMetadata = parse('file_metadata') || [];
+  const validationIssues = parse('validation_issues') || [];
+  const glReport = parse('gl_report');
+  const plReport = parse('pl_report');
+  const trialBalance = parse('trial_balance');
+  const monthlySummary = parse('transaction_summary');
+  const reviewItemsReport = parse('review_items_report');
+  const bankReconciliation = parse('bank_reconciliation') || [];
+  const fileNames = parse('file_names') || [];
+  const reportsGenerated = parse('reports_generated') || [];
 
   const reviewCount = transactions.filter(t => t.needs_review).length;
-  const autoApproved = transactions.filter(t => !t.needs_review).length;
-  const isProcessing = ['extracting','uploading','generating'].includes(session.status);
+  const isProcessing = ['extracting', 'uploading', 'generating'].includes(session.status);
   const sc = STATUS_CONFIG[session.status] || STATUS_CONFIG.uploading;
   const StatusIcon = sc.icon;
 
@@ -277,10 +380,9 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
 
   const handleSaveReview = async () => {
     setSaving(true);
-    const newReviewCount = transactions.filter(t => t.needs_review).length;
     await base44.entities.AccountingReport.update(session.id, {
       transactions_reviewed: JSON.stringify(transactions),
-      review_count: newReviewCount,
+      review_count: transactions.filter(t => t.needs_review).length,
       auto_approved_count: transactions.filter(t => !t.needs_review).length,
     });
     setSaving(false);
@@ -288,59 +390,40 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
     toast({ title: '✅ Review saved', duration: 5000 });
   };
 
-  const handleGenerate = async () => {
-    if (!selectedReports.length) { toast({ title: 'Select at least one report type', variant: 'destructive' }); return; }
-    setGenerating(true);
-    await base44.entities.AccountingReport.update(session.id, { status: 'generating' });
-    const res = await base44.functions.invoke('generateAccountingReports', {
-      mode: 'generate', report_id: session.id, report_types: selectedReports,
-      date_from: dateFrom || null, date_to: dateTo || null,
-    });
-    setGenerating(false);
+  const handleGenerated = (types) => {
+    queryClient.invalidateQueries({ queryKey: ['ar-detail', session.id] });
+    queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
     onRefresh();
-    if (res.data?.success) {
-      toast({ title: `✅ ${res.data.generated.length} report${res.data.generated.length !== 1 ? 's' : ''} generated`, duration: 5000 });
-      setActiveTab('gl');
-      queryClient.invalidateQueries({ queryKey: ['accounting-report-detail', session.id] });
-    } else {
-      toast({ title: 'Generation failed', variant: 'destructive', duration: 5000 });
-    }
+    setActiveTab(types.includes('gl') ? 'gl' : types[0] || 'overview');
   };
 
-  const downloadCSV = (rows, filename) => {
-    const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
-  };
-
-  const handleExport = (type) => {
+  const handleExportCSV = (type) => {
     if (type === 'transactions') {
-      const rows = [['Date','Posting Date','Doc #','Invoice #','Vendor/Customer','Account','Code','Description','Debit','Credit','Tax','Currency','Category','Payment Method','Reference','Source File','Source Page','Confidence']];
-      transactions.forEach(tx => rows.push([tx.transaction_date||'',tx.posting_date||'',tx.document_number||'',tx.invoice_number||'',tx.vendor_or_customer||'',tx.account_name||'',tx.account_code||'',tx.description||'',tx.debit_amount||'',tx.credit_amount||'',tx.tax_amount||'',tx.currency||'',tx.category||'',tx.payment_method||'',tx.reference_number||'',tx.source_file||'',tx.source_page||'',tx.confidence||'']));
+      const rows = [['Date','Posted Date','Description','Vendor/Payee','Cheque #','Debit','Credit','Running Balance','Category','Account','Review','Source File','Source Page','Confidence','Raw Text']];
+      transactions.forEach(tx => rows.push([tx.transaction_date||'',tx.posting_date||'',tx.description||'',tx.vendor_or_customer||'',tx.cheque_number||'',tx.debit_amount||'',tx.credit_amount||'',tx.running_balance||'',tx.category||'',tx.account_name||'',tx.needs_review?'Yes':'No',tx.source_file||'',tx.source_page||'',tx.confidence||'',tx.raw_text||'']));
       downloadCSV(rows, `Transactions_${session.session_name}.csv`);
     } else if (type === 'gl' && glReport) {
-      const rows = [['Account Code','Account Name','Category','Date','Doc #','Description','Reference','Debit','Credit','Balance','Source']];
-      for (const acct of (glReport.accounts||[])) for (const tx of acct.transactions) rows.push([acct.account_code||'',acct.account_name,acct.category,tx.transaction_date||'',tx.document_number||'',tx.description||'',tx.reference_number||'',tx.debit_amount||0,tx.credit_amount||0,tx.running_balance?.toFixed(2)||'',tx.source_file||'']);
+      const rows = [['Account','Category','Date','Description','Reference','Debit','Credit','Running Balance','Source','Review']];
+      (glReport.accounts||[]).forEach(acct => acct.transactions.forEach(tx => rows.push([acct.account_name,acct.category,tx.transaction_date||'',tx.description||'',tx.cheque_number||'',tx.debit_amount||0,tx.credit_amount||0,(tx.running_balance||0).toFixed(2),tx.source_file||'',tx.needs_review?'Yes':'No'])));
       downloadCSV(rows, `GL_${session.session_name}.csv`);
     } else if (type === 'pl' && plReport) {
       const rows = [['Section','Account','Amount']];
       (plReport.revenue_lines||[]).forEach(l => rows.push(['Revenue',l.account,l.amount]));
-      (plReport.cogs_lines||[]).forEach(l => rows.push(['COGS',l.account,l.amount]));
       rows.push(['Gross Profit','',plReport.gross_profit]);
       (plReport.operating_expense_lines||[]).forEach(l => rows.push(['Operating Expenses',l.account,l.amount]));
-      rows.push(['Net Operating Income','',plReport.net_operating_income]);
-      rows.push(['Net Profit / Loss','',plReport.net_profit]);
+      rows.push(['Net Profit','',plReport.net_profit]);
       downloadCSV(rows, `PL_${session.session_name}.csv`);
-    } else if (type === 'trial_balance' && trialBalance) {
-      const rows = [['Account Code','Account Name','Type','Category','Debit','Credit','Net Balance']];
-      (trialBalance.accounts||[]).forEach(a => rows.push([a.account_code||'',a.account_name,a.account_type,a.category,a.debit_total,a.credit_total,a.net_balance]));
-      rows.push(['','TOTALS','','',trialBalance.total_debits,trialBalance.total_credits,'']);
-      downloadCSV(rows, `TrialBalance_${session.session_name}.csv`);
+    } else if (type === 'recon' && bankReconciliation.length) {
+      const rows = [['File','Period Start','Period End','Opening Balance','Total Credits','Total Debits','Calculated Closing','Statement Closing','Difference','Status','Warnings']];
+      bankReconciliation.forEach(r => rows.push([r.file_name,r.period_start||'',r.period_end||'',r.opening_balance??'',r.total_credits,r.total_debits,r.calculated_closing??'',r.closing_balance??'',r.difference??'',r.status,(r.warnings||[]).join('; ')]));
+      downloadCSV(rows, `Reconciliation_${session.session_name}.csv`);
+    } else if (type === 'review' && reviewItemsReport) {
+      const rows = [['Date','Description','Debit','Credit','Suggested Category','Review Reason','Source File','Confidence','Recommended Action']];
+      (reviewItemsReport.items||[]).forEach(i => rows.push([i.transaction_date||'',i.description||'',i.debit_amount||'',i.credit_amount||'',i.suggested_category||'',i.review_reason||'',i.source_file||'',i.confidence||'',i.recommended_action||'']));
+      downloadCSV(rows, `ReviewItems_${session.session_name}.csv`);
     }
-    toast({ title: `${type.replace(/_/g,' ')} exported as CSV`, duration: 5000 });
+    toast({ title: `${type} exported`, duration: 5000 });
   };
-
-  const toggleReport = (id) => setSelectedReports(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id]);
 
   return (
     <div className="space-y-5">
@@ -360,20 +443,25 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {transactions.length > 0 && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('transactions')}><Download className="w-3.5 h-3.5" /> Transactions</Button>}
-          {glReport && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('gl')}><Download className="w-3.5 h-3.5" /> GL CSV</Button>}
-          {plReport && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('pl')}><Download className="w-3.5 h-3.5" /> P&L CSV</Button>}
-          {trialBalance && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('trial_balance')}><Download className="w-3.5 h-3.5" /> TB CSV</Button>}
+          {!isProcessing && transactions.length > 0 && (
+            <Button size="sm" variant="default" className="h-8 text-xs gap-1" onClick={() => setGenerateOpen(true)}>
+              <BarChart2 className="w-3.5 h-3.5" /> Generate Reports
+            </Button>
+          )}
+          {transactions.length > 0 && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('transactions')}><Download className="w-3.5 h-3.5" /> Transactions CSV</Button>}
+          {glReport && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('gl')}><Download className="w-3.5 h-3.5" /> GL CSV</Button>}
+          {bankReconciliation.length > 0 && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('recon')}><Download className="w-3.5 h-3.5" /> Recon CSV</Button>}
+          {reviewItemsReport && <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('review')}><Download className="w-3.5 h-3.5" /> Review CSV</Button>}
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Files', value: fileNames.length, color: 'text-foreground', icon: FileText },
           { label: 'Transactions', value: session.transaction_count || transactions.length, color: 'text-foreground', icon: BookOpen },
-          { label: 'Auto-Approved', value: autoApproved, color: 'text-green-600', icon: CheckCircle2 },
-          { label: 'Exceptions', value: reviewCount, color: reviewCount > 0 ? 'text-amber-600' : 'text-green-600', icon: AlertTriangle },
+          { label: 'Review Items', value: reviewCount, color: reviewCount > 0 ? 'text-amber-600' : 'text-green-600', icon: AlertTriangle },
+          { label: 'Reconciled', value: bankReconciliation.length > 0 ? `${bankReconciliation.filter(r => ['reconciled','reconciled_with_warnings'].includes(r.status)).length}/${bankReconciliation.length}` : '—', color: 'text-foreground', icon: Scale },
         ].map(s => (
           <Card key={s.label} className="p-4">
             <div className="flex items-center justify-between"><p className="text-xs text-muted-foreground">{s.label}</p><s.icon className={`w-4 h-4 ${s.color} opacity-50`} /></div>
@@ -382,10 +470,8 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
         ))}
       </div>
 
-      {/* Extraction progress */}
-      {isProcessing && fileProgress.length > 0 && (
-        <Card className="p-4"><ARFileProgress fileProgress={fileProgress} /></Card>
-      )}
+      {/* Extraction Progress */}
+      {isProcessing && <Card className="p-4"><ARFileProgress fileProgress={fileProgress} /><p className="text-xs text-muted-foreground text-center mt-3">AI extraction running — you can navigate away and return.</p></Card>}
 
       {/* Validation Issues */}
       {!isProcessing && validationIssues.length > 0 && (
@@ -402,39 +488,39 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="h-9 flex-wrap gap-1">
+        <TabsList className="h-auto flex flex-wrap gap-1">
           <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>
-          {reviewCount > 0 && <TabsTrigger value="exceptions" className="text-xs gap-1">Exceptions <span className="ml-1 bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full">{reviewCount}</span></TabsTrigger>}
           <TabsTrigger value="transactions" className="text-xs">All Transactions</TabsTrigger>
-          <TabsTrigger value="generate" className="text-xs">Generate Reports</TabsTrigger>
+          {reviewCount > 0 && <TabsTrigger value="exceptions" className="text-xs gap-1">Exceptions <span className="ml-1 bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full">{reviewCount}</span></TabsTrigger>}
+          {bankReconciliation.length > 0 && <TabsTrigger value="recon" className="text-xs">Bank Reconciliation</TabsTrigger>}
           {glReport && <TabsTrigger value="gl" className="text-xs">General Ledger</TabsTrigger>}
           {plReport && <TabsTrigger value="pl" className="text-xs">Profit & Loss</TabsTrigger>}
+          {monthlySummary && <TabsTrigger value="monthly" className="text-xs">Monthly Summary</TabsTrigger>}
+          {reviewItemsReport && <TabsTrigger value="review" className="text-xs gap-1">Review Items <span className="ml-1 bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full">{reviewItemsReport.count}</span></TabsTrigger>}
           {trialBalance && <TabsTrigger value="tb" className="text-xs">Trial Balance</TabsTrigger>}
-          {txSummary && <TabsTrigger value="summary" className="text-xs">Summary</TabsTrigger>}
-          {vendorLedger && <TabsTrigger value="vendor" className="text-xs">Vendor Ledger</TabsTrigger>}
           <TabsTrigger value="audit" className="text-xs">Audit Trail</TabsTrigger>
         </TabsList>
 
         {/* OVERVIEW */}
         <TabsContent value="overview" className="mt-4 space-y-4">
           {isProcessing ? (
-            <Card className="p-6"><ARFileProgress fileProgress={fileProgress} /><p className="text-xs text-muted-foreground text-center mt-4">AI extraction running in background — you can navigate away and return.</p></Card>
+            <Card className="p-6"><ARFileProgress fileProgress={fileProgress} /></Card>
           ) : (
             <>
-              {session.total_debits > 0 && (
+              {(session.total_debits > 0 || session.total_credits > 0) && (
                 <div className="grid grid-cols-3 gap-3">
-                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Debits</p><p className="text-base font-bold font-mono text-red-600">${(session.total_debits||0).toFixed(2)}</p></Card>
-                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Credits</p><p className="text-base font-bold font-mono text-green-600">${(session.total_credits||0).toFixed(2)}</p></Card>
-                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Difference</p>
-                    <p className={`text-base font-bold font-mono ${Math.abs((session.total_debits||0)-(session.total_credits||0)) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
-                      ${Math.abs((session.total_debits||0)-(session.total_credits||0)).toFixed(2)}
+                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Debits</p><p className="text-base font-bold font-mono text-red-600">${(session.total_debits || 0).toFixed(2)}</p></Card>
+                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Credits</p><p className="text-base font-bold font-mono text-green-600">${(session.total_credits || 0).toFixed(2)}</p></Card>
+                  <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Net</p>
+                    <p className={`text-base font-bold font-mono ${((session.total_credits||0)-(session.total_debits||0)) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      ${Math.abs((session.total_credits||0)-(session.total_debits||0)).toFixed(2)}
                     </p>
                   </Card>
                 </div>
               )}
               {fileMetadata.length > 0 && (
                 <Card className="p-4">
-                  <h3 className="font-semibold text-sm mb-3">Document Analysis</h3>
+                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2"><FileSearch className="w-4 h-4 text-primary" /> Source Document Analysis</h3>
                   <div className="space-y-3">
                     {fileMetadata.map((fm, i) => (
                       <div key={i} className={`rounded-lg border px-3 py-2.5 ${fm.error ? 'border-red-200 bg-red-50' : 'bg-muted/30'}`}>
@@ -442,46 +528,43 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
                           <p className="text-xs font-medium truncate">{fm.file_name}</p>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {fm.confidence_score > 0 && <span className="text-[10px] text-blue-600">{fm.confidence_score}%</span>}
-                            <Badge className="text-[10px] border-0 bg-muted">{fm.document_type || fm.statement_type || 'doc'}</Badge>
+                            <Badge className="text-[10px] border-0 bg-muted">{fm.document_type || 'doc'}</Badge>
                           </div>
                         </div>
                         {fm.error ? <p className="text-[10px] text-red-600 mt-1">{fm.error}</p> : (
                           <div className="flex flex-wrap gap-3 mt-1.5">
+                            {fm.institution_name && <span className="text-[10px] text-muted-foreground">🏦 {fm.institution_name}</span>}
                             {fm.company_name && <span className="text-[10px] text-muted-foreground">🏢 {fm.company_name}</span>}
                             {fm.period_start && <span className="text-[10px] text-muted-foreground">📅 {fm.period_start} → {fm.period_end || '?'}</span>}
                             {fm.opening_balance != null && <span className="text-[10px] text-muted-foreground">Open: ${fm.opening_balance?.toFixed(2)}</span>}
                             {fm.closing_balance != null && <span className="text-[10px] text-muted-foreground">Close: ${fm.closing_balance?.toFixed(2)}</span>}
-                            <span className="text-[10px] text-muted-foreground">{fm.tx_count} transactions</span>
+                            <span className="text-[10px] text-muted-foreground">{fm.tx_count} txns</span>
                           </div>
                         )}
                         {fm.document_summary && <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{fm.document_summary}</p>}
+                        {(fm.extraction_warnings || []).map((w, wi) => (
+                          <p key={wi} className="text-[10px] text-amber-600 mt-0.5">⚠ {w}</p>
+                        ))}
                       </div>
                     ))}
                   </div>
                 </Card>
               )}
+              {!transactions.length && !isProcessing && (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Zap className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                  <p className="text-sm">No transactions extracted yet. {session.status === 'failed' ? 'Extraction failed — try again.' : ''}</p>
+                </div>
+              )}
             </>
           )}
-        </TabsContent>
-
-        {/* EXCEPTIONS */}
-        <TabsContent value="exceptions" className="mt-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">Edit inline, then approve. Clean transactions are already auto-approved.</p>
-              <Button size="sm" onClick={handleSaveReview} disabled={saving} className="h-8 text-xs gap-1">
-                {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save & Approve
-              </Button>
-            </div>
-            <ARTransactionTable transactions={transactions} onUpdate={handleUpdateTransaction} showOnlyReview />
-          </div>
         </TabsContent>
 
         {/* ALL TRANSACTIONS */}
         <TabsContent value="transactions" className="mt-4">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">{transactions.length} transactions · {autoApproved} approved · {reviewCount} exceptions</p>
+              <p className="text-xs text-muted-foreground">{transactions.length} transactions · {transactions.filter(t=>!t.needs_review).length} auto-categorized · {reviewCount} for review</p>
               <Button size="sm" variant="outline" onClick={handleSaveReview} disabled={saving} className="h-8 text-xs">
                 {saving ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null} Save Changes
               </Button>
@@ -490,51 +573,36 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
           </div>
         </TabsContent>
 
-        {/* GENERATE */}
-        <TabsContent value="generate" className="mt-4">
-          <Card className="p-6 space-y-5">
-            <div>
-              <h3 className="font-semibold text-base flex items-center gap-2"><BarChart2 className="w-5 h-5 text-primary" /> Select Reports to Generate</h3>
-              <p className="text-xs text-muted-foreground mt-1">Choose one or more report types. Leave date range blank to include all transactions.</p>
+        {/* EXCEPTIONS */}
+        <TabsContent value="exceptions" className="mt-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Edit inline, then approve. These are excluded from P&L by default.</p>
+              <Button size="sm" onClick={handleSaveReview} disabled={saving} className="h-8 text-xs gap-1">
+                {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save & Approve
+              </Button>
             </div>
-            {reviewCount > 0 && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                <span>{reviewCount} exception{reviewCount !== 1 ? 's' : ''} still pending. Reports will use current data — resolve exceptions first for maximum accuracy.</span>
-              </div>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {REPORT_OPTIONS.map(opt => (
-                <div
-                  key={opt.id}
-                  className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${selectedReports.includes(opt.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted/30'}`}
-                  onClick={() => toggleReport(opt.id)}
-                >
-                  <Checkbox checked={selectedReports.includes(opt.id)} onCheckedChange={() => toggleReport(opt.id)} className="mt-0.5" />
-                  <div>
-                    <div className="flex items-center gap-1.5"><opt.icon className="w-3.5 h-3.5 text-primary" /><p className="text-xs font-semibold">{opt.label}</p></div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div><Label className="text-xs">Date From</Label><Input type="date" className="mt-1 h-9 text-xs" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
-              <div><Label className="text-xs">Date To</Label><Input type="date" className="mt-1 h-9 text-xs" value={dateTo} onChange={e => setDateTo(e.target.value)} /></div>
-            </div>
-            <Button onClick={handleGenerate} disabled={generating || transactions.length === 0 || selectedReports.length === 0} className="w-full">
-              {generating ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Generating Reports…</> : <><BarChart2 className="w-4 h-4 mr-2" /> Generate {selectedReports.length} Report{selectedReports.length !== 1 ? 's' : ''}</>}
-            </Button>
-            {transactions.length === 0 && <p className="text-xs text-muted-foreground text-center">Waiting for extraction to complete…</p>}
-          </Card>
+            <ARTransactionTable transactions={transactions} onUpdate={handleUpdateTransaction} showOnlyReview />
+          </div>
         </TabsContent>
+
+        {/* BANK RECONCILIATION */}
+        {bankReconciliation.length > 0 && (
+          <TabsContent value="recon" className="mt-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-base flex items-center gap-2"><Scale className="w-4 h-4 text-primary" /> Bank Reconciliation</h3>
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('recon')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+            </div>
+            <ARBankReconciliation reconciliations={bankReconciliation} />
+          </TabsContent>
+        )}
 
         {/* GL */}
         {glReport && (
           <TabsContent value="gl" className="mt-4">
             <div className="flex items-center justify-between mb-4">
-              <div><h3 className="font-semibold text-base flex items-center gap-2"><BookOpen className="w-4 h-4 text-primary" /> General Ledger</h3><p className="text-xs text-muted-foreground">Generated {new Date(glReport.generated_at).toLocaleString('en-CA')}</p></div>
-              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('gl')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+              <div><h3 className="font-semibold text-base flex items-center gap-2"><BookOpen className="w-4 h-4 text-primary" /> General Ledger</h3><p className="text-xs text-muted-foreground">{glReport.transaction_count} transactions · {glReport.accounts?.length} accounts</p></div>
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('gl')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
             </div>
             <ARGLReport report={glReport} />
           </TabsContent>
@@ -543,66 +611,46 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
         {/* P&L */}
         {plReport && (
           <TabsContent value="pl" className="mt-4">
-            <div className="flex items-center justify-between mb-4">
-              <div><h3 className="font-semibold text-base flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Profit & Loss</h3><p className="text-xs text-muted-foreground">Generated {new Date(plReport.generated_at).toLocaleString('en-CA')}</p></div>
-              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('pl')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-base flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Profit & Loss</h3>
+                <p className="text-xs text-muted-foreground">{plReport.included_count} included · {plReport.excluded_count} excluded · {plReport.uncategorized_count} uncategorized</p>
+              </div>
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('pl')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
             </div>
+            {plReport.note && (
+              <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 mb-4">
+                <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /> {plReport.note}
+              </div>
+            )}
             <ARPLReport report={plReport} />
+          </TabsContent>
+        )}
+
+        {/* MONTHLY SUMMARY */}
+        {monthlySummary && (
+          <TabsContent value="monthly" className="mt-4">
+            <h3 className="font-semibold text-base flex items-center gap-2 mb-4"><Calendar className="w-4 h-4 text-primary" /> Monthly Summary</h3>
+            <ARMonthlySummary report={monthlySummary} />
+          </TabsContent>
+        )}
+
+        {/* REVIEW ITEMS */}
+        {reviewItemsReport && (
+          <TabsContent value="review" className="mt-4">
+            <div className="flex items-center justify-between mb-4">
+              <div><h3 className="font-semibold text-base flex items-center gap-2"><ListChecks className="w-4 h-4 text-primary" /> Review Items</h3><p className="text-xs text-muted-foreground">{reviewItemsReport.count} transactions require attention</p></div>
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExportCSV('review')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+            </div>
+            <ARReviewItems report={reviewItemsReport} />
           </TabsContent>
         )}
 
         {/* TRIAL BALANCE */}
         {trialBalance && (
           <TabsContent value="tb" className="mt-4">
-            <div className="flex items-center justify-between mb-4">
-              <div><h3 className="font-semibold text-base flex items-center gap-2"><BarChart2 className="w-4 h-4 text-primary" /> Trial Balance</h3><p className="text-xs text-muted-foreground">Generated {new Date(trialBalance.generated_at).toLocaleString('en-CA')}</p></div>
-              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('trial_balance')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
-            </div>
+            <h3 className="font-semibold text-base flex items-center gap-2 mb-4"><Scale className="w-4 h-4 text-primary" /> Trial Balance</h3>
             <ARTrialBalance report={trialBalance} />
-          </TabsContent>
-        )}
-
-        {/* TRANSACTION SUMMARY */}
-        {txSummary && (
-          <TabsContent value="summary" className="mt-4">
-            <Card className="p-4">
-              <h3 className="font-semibold text-sm mb-4 flex items-center gap-2"><FileText className="w-4 h-4 text-primary" /> Transaction Summary</h3>
-              <div className="grid grid-cols-3 gap-3 mb-4">
-                <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Transactions</p><p className="text-xl font-bold">{txSummary.total_transactions}</p></Card>
-                <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Debits</p><p className="text-xl font-bold font-mono text-red-600">${(txSummary.total_debits||0).toFixed(2)}</p></Card>
-                <Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Total Credits</p><p className="text-xl font-bold font-mono text-green-600">${(txSummary.total_credits||0).toFixed(2)}</p></Card>
-              </div>
-              <table className="w-full text-left border rounded-xl overflow-hidden">
-                <thead className="bg-muted/50"><tr>{['Category','Count','Total Debit','Total Credit'].map(h => <th key={h} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{h}</th>)}</tr></thead>
-                <tbody>{(txSummary.by_category||[]).map((row, i) => (
-                  <tr key={i} className="border-t hover:bg-muted/10">
-                    <td className="px-3 py-2 text-xs font-medium capitalize">{row.category.replace(/_/g,' ')}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{row.count}</td>
-                    <td className="px-3 py-2 text-xs font-mono text-red-600">${(row.total_debit||0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-xs font-mono text-green-600">${(row.total_credit||0).toFixed(2)}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </Card>
-          </TabsContent>
-        )}
-
-        {/* VENDOR LEDGER */}
-        {vendorLedger && (
-          <TabsContent value="vendor" className="mt-4">
-            <Card className="p-4">
-              <h3 className="font-semibold text-sm mb-4 flex items-center gap-2"><Building2 className="w-4 h-4 text-primary" /> Vendor Ledger</h3>
-              <div className="space-y-2">
-                {(vendorLedger.vendors||[]).map((v, i) => (
-                  <div key={i} className="rounded-lg border px-3 py-2.5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium">{v.vendor}</p>
-                      <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{v.transaction_count} txns</span><span className="text-xs font-mono font-bold text-red-600">${v.total_paid.toFixed(2)}</span></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
           </TabsContent>
         )}
 
@@ -620,15 +668,18 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
                 { label: 'Source Files', value: fileNames.join(', ') || '—' },
                 { label: 'Confidence Score', value: session.confidence_score ? `${session.confidence_score}%` : '—' },
                 { label: 'Transactions Extracted', value: session.transaction_count || transactions.length },
-                { label: 'Auto-Approved', value: session.auto_approved_count || autoApproved },
-                { label: 'Exceptions Remaining', value: session.review_count || reviewCount },
+                { label: 'Auto-Categorized', value: session.auto_approved_count || transactions.filter(t => !t.needs_review).length },
+                { label: 'Review Items', value: session.review_count || reviewCount },
+                { label: 'Statement Period', value: session.date_from ? `${session.date_from} → ${session.date_to || '?'}` : '—' },
                 { label: 'Reports Generated', value: reportsGenerated.join(', ') || 'None yet' },
-                { label: 'Date Range Detected', value: session.date_from ? `${session.date_from} → ${session.date_to || '?'}` : '—' },
-                { label: 'Prepared By', value: 'SOC Ai Accounting System' },
-                { label: 'Generated On', value: new Date().toLocaleString('en-CA') },
+                { label: 'Total Debits', value: session.total_debits ? `$${session.total_debits.toFixed(2)}` : '—' },
+                { label: 'Total Credits', value: session.total_credits ? `$${session.total_credits.toFixed(2)}` : '—' },
+                { label: 'Reconciliation Status', value: bankReconciliation.length > 0 ? `${bankReconciliation.filter(r => ['reconciled','reconciled_with_warnings'].includes(r.status)).length}/${bankReconciliation.length} statements reconciled` : 'Not yet reconciled' },
+                { label: 'System', value: 'SOC Ai Accounting System' },
+                { label: 'Report Generated', value: new Date().toLocaleString('en-CA') },
               ].map(row => (
                 <div key={row.label} className="flex justify-between items-start gap-4 py-2 border-b last:border-0">
-                  <span className="text-xs text-muted-foreground font-medium w-48 flex-shrink-0">{row.label}</span>
+                  <span className="text-xs text-muted-foreground font-medium w-52 flex-shrink-0">{row.label}</span>
                   <span className="text-xs text-right break-all">{row.value}</span>
                 </div>
               ))}
@@ -636,11 +687,19 @@ function SessionDetail({ session: initialSession, onBack, onRefresh }) {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <GenerateDialog
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        session={session}
+        transactions={transactions}
+        onGenerated={handleGenerated}
+      />
     </div>
   );
 }
 
-// ─── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function AccountingReports() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [activeSession, setActiveSession] = useState(null);
@@ -652,12 +711,12 @@ export default function AccountingReports() {
     const unsubscribe = base44.entities.AccountingReport.subscribe((event) => {
       if (event.type === 'update') {
         const { data, old_data } = event;
-        const wasProcessing = ['extracting','generating'].includes(old_data?.status);
-        const isDone = ['review','completed','failed'].includes(data?.status);
+        const wasProcessing = ['extracting', 'generating'].includes(old_data?.status);
+        const isDone = ['review', 'completed', 'failed'].includes(data?.status);
         if (wasProcessing && isDone) {
           const name = data.session_name || 'Session';
-          if (data.status === 'failed') toast({ title: `❌ ${name} — processing failed`, variant: 'destructive', duration: 5000 });
-          else toast({ title: `✅ ${name} — extraction complete`, description: `${data.transaction_count || 0} transactions extracted · ${data.confidence_score || 0}% confidence`, duration: 5000 });
+          if (data.status === 'failed') toast({ title: `❌ ${name} — extraction failed`, variant: 'destructive', duration: 5000 });
+          else toast({ title: `✅ ${name} — ready for review`, description: `${data.transaction_count || 0} transactions · ${data.review_count || 0} review items · ${data.confidence_score || 0}% confidence`, duration: 5000 });
           queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
         }
       }
@@ -668,16 +727,12 @@ export default function AccountingReports() {
   const { data: sessions = [], isLoading } = useQuery({
     queryKey: ['accounting-reports'],
     queryFn: () => base44.entities.AccountingReport.list('-created_date'),
-    refetchInterval: (q) => {
-      const data = q.state.data;
-      return Array.isArray(data) && data.some(s => ['extracting','generating'].includes(s.status)) ? 1500 : false;
-    },
+    refetchInterval: (q) => Array.isArray(q.state.data) && q.state.data.some(s => ['extracting', 'generating'].includes(s.status)) ? 2000 : false,
   });
 
   const handleDelete = async (id) => {
     queryClient.setQueryData(['accounting-reports'], (old) => (old || []).filter(s => s.id !== id));
     await base44.entities.AccountingReport.delete(id);
-    queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
     toast({ title: 'Session deleted', duration: 5000 });
   };
 
@@ -685,8 +740,7 @@ export default function AccountingReports() {
   const handleOpenSession = async (session) => { try { const fresh = await base44.entities.AccountingReport.filter({ id: session.id }); setActiveSession(fresh[0] || session); } catch { setActiveSession(session); } };
   const handleRefresh = async () => {
     if (!activeSession) return;
-    const fresh = await base44.entities.AccountingReport.filter({ id: activeSession.id });
-    if (fresh?.length) setActiveSession(fresh[0]);
+    try { const fresh = await base44.entities.AccountingReport.filter({ id: activeSession.id }); if (fresh?.length) setActiveSession(fresh[0]); } catch {}
     queryClient.invalidateQueries({ queryKey: ['accounting-reports'] });
   };
 
@@ -700,27 +754,27 @@ export default function AccountingReports() {
 
   const totalTx = sessions.reduce((s, r) => s + (r.transaction_count || 0), 0);
   const totalReports = sessions.reduce((s, r) => { try { return s + JSON.parse(r.reports_generated || '[]').length; } catch { return s; } }, 0);
-  const avgConfidence = sessions.filter(s => s.confidence_score > 0).length > 0
-    ? Math.round(sessions.filter(s => s.confidence_score > 0).reduce((s, r) => s + r.confidence_score, 0) / sessions.filter(s => s.confidence_score > 0).length) : 0;
+  const avgConf = sessions.filter(s => s.confidence_score > 0);
+  const avgConfidence = avgConf.length > 0 ? Math.round(avgConf.reduce((s, r) => s + r.confidence_score, 0) / avgConf.length) : 0;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold flex items-center gap-2"><BookOpen className="w-6 h-6 text-primary" /> Accounting Report Generator</h1>
-          <p className="text-sm text-muted-foreground mt-1">Upload financial documents → AI extracts & classifies → Review → Generate GL, P&L, Trial Balance & more</p>
+          <p className="text-sm text-muted-foreground mt-1">Upload bank statements, CSVs, PDFs, Excel or OFX files → AI extracts, reconciles & generates GL, P&L, Monthly Summary, Bank Reconciliation & more</p>
         </div>
-        <Button onClick={() => setNewSessionOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> New Report Session</Button>
+        <Button onClick={() => setNewSessionOpen(true)} className="gap-2 flex-shrink-0"><Plus className="w-4 h-4" /> New Report Session</Button>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: 'Total Sessions', value: sessions.length, color: 'text-foreground' },
-          { label: 'Transactions Extracted', value: totalTx.toLocaleString(), color: 'text-foreground' },
+          { label: 'Total Sessions', value: sessions.length },
+          { label: 'Transactions Extracted', value: totalTx.toLocaleString() },
           { label: 'Reports Generated', value: totalReports, color: 'text-green-600' },
           { label: 'Avg. Confidence', value: avgConfidence > 0 ? `${avgConfidence}%` : '—', color: 'text-blue-600' },
         ].map(s => (
-          <Card key={s.label} className="p-4"><p className="text-xs text-muted-foreground">{s.label}</p><p className={`text-2xl font-bold ${s.color}`}>{s.value}</p></Card>
+          <Card key={s.label} className="p-4"><p className="text-xs text-muted-foreground">{s.label}</p><p className={`text-2xl font-bold ${s.color || ''}`}>{s.value}</p></Card>
         ))}
       </div>
 

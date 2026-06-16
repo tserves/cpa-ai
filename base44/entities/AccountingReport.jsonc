@@ -73,9 +73,9 @@
       "type": "string",
       "description": "JSON array of validation flags"
     },
-    "chart_of_accounts": {
+    "bank_reconciliation": {
       "type": "string",
-      "description": "JSON object of account classifications"
+      "description": "JSON array of per-file reconciliation results"
     },
     "total_debits": {
       "type": "number"
@@ -93,44 +93,30 @@
       "type": "number"
     },
     "confidence_score": {
-      "type": "number",
-      "description": "Overall extraction confidence 0-100"
+      "type": "number"
     },
     "gl_report": {
-      "type": "string",
-      "description": "JSON of generated GL report"
+      "type": "string"
     },
     "pl_report": {
-      "type": "string",
-      "description": "JSON of generated P&L report"
+      "type": "string"
     },
     "trial_balance": {
-      "type": "string",
-      "description": "JSON of trial balance"
-    },
-    "balance_sheet": {
-      "type": "string",
-      "description": "JSON of balance sheet"
+      "type": "string"
     },
     "transaction_summary": {
       "type": "string",
-      "description": "JSON of transaction summary"
+      "description": "Monthly summary JSON"
+    },
+    "review_items_report": {
+      "type": "string",
+      "description": "Review items JSON"
     },
     "vendor_ledger": {
-      "type": "string",
-      "description": "JSON of vendor ledger"
-    },
-    "customer_ledger": {
-      "type": "string",
-      "description": "JSON of customer ledger"
+      "type": "string"
     },
     "reports_generated": {
-      "type": "string",
-      "description": "JSON array of generated report types"
-    },
-    "export_history": {
-      "type": "string",
-      "description": "JSON array of export log entries"
+      "type": "string"
     },
     "notes": {
       "type": "string"
