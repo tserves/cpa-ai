@@ -440,7 +440,8 @@ Deno.serve(async (req) => {
       const txsWithRules = result.transactions.map(tx => applyUserRules(tx, userRules));
       const existingTxs = existingTxsRaw ? JSON.parse(existingTxsRaw) : [];
       const runningTxs = existingTxs.concat(txsWithRules);
-      await base44.asServiceRole.entities.AccountingReport.update(reportId, { file_progress: JSON.stringify(progress), transaction_count: runningTxs.length, transactions_raw: JSON.stringify(runningTxs) });
+      // Only update progress + count — avoid storing large transactions_raw mid-flight (can exceed field size limit)
+      await base44.asServiceRole.entities.AccountingReport.update(reportId, { file_progress: JSON.stringify(progress), transaction_count: runningTxs.length });
       return Response.json({ success: true, file_result: { file_name, document_type: result.document_type, institution_name: result.institution_name, account_number_masked: result.account_number_masked, company_name: result.company_name, period_start: result.period_start, period_end: result.period_end, opening_balance: result.opening_balance, closing_balance: result.closing_balance, statement_total_credits: result.statement_total_credits, statement_total_debits: result.statement_total_debits, page_count: result.page_count, is_scanned: result.is_scanned, document_summary: result.document_summary, tx_count: txsWithRules.length, confidence_score: result.confidence_score, error: result.error || null, extraction_warnings: result.extraction_warnings || [] }, transactions: txsWithRules, progress: JSON.stringify(progress) });
     }
 

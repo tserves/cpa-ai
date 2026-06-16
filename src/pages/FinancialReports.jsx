@@ -140,19 +140,32 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
       try {
         let progress = fileNames.map((name, i) => ({ name, index: i, status: 'pending', file_type: name.split('.').pop().toLowerCase(), tx_count: 0 }));
         await base44.entities.AccountingReport.update(record.id, { status: 'extracting', file_progress: JSON.stringify(progress), transaction_count: 0 });
-        const fileResults = [], allTx = [];
+        const fileResults = [];
+        // Accumulate transactions only in frontend memory — don't send growing arrays back to backend
+        let allTx = [];
         for (let i = 0; i < fileUrls.length; i++) {
-          const res = await base44.functions.invoke('generateAccountingReports', {
-            mode: 'extract_file', report_id: record.id, file_url: fileUrls[i], file_name: fileNames[i],
-            file_index: i, file_progress: JSON.stringify(progress), existing_transactions: JSON.stringify(allTx),
-          });
-          if (res.data?.success) {
-            allTx.push(...(res.data.transactions || []));
-            fileResults.push(res.data.file_result);
-            progress = JSON.parse(res.data.progress || JSON.stringify(progress));
-          } else {
-            progress[i] = { ...progress[i], status: 'failed', error: res.data?.error };
-            fileResults.push({ file_name: fileNames[i], tx_count: 0, confidence_score: 0, error: res.data?.error });
+          try {
+            // 5-minute per-file timeout
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Extraction timed out after 5 minutes')), 300000));
+            const invokePromise = base44.functions.invoke('generateAccountingReports', {
+              mode: 'extract_file', report_id: record.id, file_url: fileUrls[i], file_name: fileNames[i],
+              file_index: i, file_progress: JSON.stringify(progress),
+              // Don't pass existing_transactions — backend no longer needs it for mid-flight updates
+            });
+            const res = await Promise.race([invokePromise, timeoutPromise]);
+            if (res.data?.success) {
+              allTx = allTx.concat(res.data.transactions || []);
+              fileResults.push(res.data.file_result);
+              progress = JSON.parse(res.data.progress || JSON.stringify(progress));
+            } else {
+              progress[i] = { ...progress[i], status: 'failed', error: res.data?.error || 'Extraction failed' };
+              fileResults.push({ file_name: fileNames[i], tx_count: 0, confidence_score: 0, error: res.data?.error });
+              await base44.entities.AccountingReport.update(record.id, { file_progress: JSON.stringify(progress) });
+            }
+          } catch (fileErr) {
+            progress[i] = { ...progress[i], status: 'failed', error: fileErr.message };
+            fileResults.push({ file_name: fileNames[i], tx_count: 0, confidence_score: 0, error: fileErr.message });
+            await base44.entities.AccountingReport.update(record.id, { file_progress: JSON.stringify(progress) });
           }
         }
         await base44.functions.invoke('generateAccountingReports', {
