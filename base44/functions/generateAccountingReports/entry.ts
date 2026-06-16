@@ -105,23 +105,33 @@ Return JSON with:
 
 RULES: Extract every row. Deposits=credit_amount, withdrawals=debit_amount. Skip header/footer/summary rows. NEVER fabricate data.`;
 
-  const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
-    prompt,
-    file_urls: [url],
-    model: 'gemini_3_flash',
-    response_json_schema: EXTRACTION_SCHEMA,
-  });
+  // 90-second timeout per file to prevent hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90000);
+  
+  try {
+    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt,
+      file_urls: [url],
+      model: 'gemini_3_flash',
+      response_json_schema: EXTRACTION_SCHEMA,
+    });
+    clearTimeout(timeoutId);
 
-  const seen = new Set();
-  const txs = (result.transactions || []).map(tx => {
-    let mapped = applySmartMapping(tx);
-    const key = `${tx.transaction_date}|${tx.debit_amount}|${tx.credit_amount}|${(tx.description||'').substring(0,30)}`;
-    if (seen.has(key)) mapped = { ...mapped, needs_review: true, review_reason: 'Possible duplicate', is_duplicate: true };
-    seen.add(key);
-    return mapped;
-  });
+    const seen = new Set();
+    const txs = (result.transactions || []).map(tx => {
+      let mapped = applySmartMapping(tx);
+      const key = `${tx.transaction_date}|${tx.debit_amount}|${tx.credit_amount}|${(tx.description||'').substring(0,30)}`;
+      if (seen.has(key)) mapped = { ...mapped, needs_review: true, review_reason: 'Possible duplicate', is_duplicate: true };
+      seen.add(key);
+      return mapped;
+    });
 
-  return { ...result, transactions: txs, file_name: fileName };
+    return { ...result, transactions: txs, file_name: fileName };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
 }
 
 function reconcile(fileResult, txs) {
@@ -202,6 +212,7 @@ Deno.serve(async (req) => {
       await base44.asServiceRole.entities.AccountingReport.update(report_id, { status: 'extracting', file_progress: JSON.stringify(progress) });
 
       const allTxs = [], fileResults = [];
+      let completedCount = 0;
       for (let i = 0; i < file_urls.length; i++) {
         progress[i].status = 'processing';
         await base44.asServiceRole.entities.AccountingReport.update(report_id, { file_progress: JSON.stringify(progress) });
@@ -212,20 +223,33 @@ Deno.serve(async (req) => {
           progress[i].status = 'done';
           progress[i].tx_count = result.transactions.length;
           progress[i].confidence = result.confidence_score;
+          completedCount++;
         } catch (e) {
           fileResults.push({ file_name: file_names[i], transactions: [], confidence_score: 0, error: e.message });
           progress[i].status = 'failed';
           progress[i].error = e.message;
         }
-        await base44.asServiceRole.entities.AccountingReport.update(report_id, { file_progress: JSON.stringify(progress), transaction_count: allTxs.length });
+        // Save partial results after each file - protects against total loss on timeout
+        await base44.asServiceRole.entities.AccountingReport.update(report_id, { 
+          file_progress: JSON.stringify(progress), 
+          transaction_count: allTxs.length,
+          transactions_raw: JSON.stringify(allTxs),
+          transactions_reviewed: JSON.stringify(allTxs),
+        });
       }
 
-      // Build reconciliation + all reports immediately
+      const hasFailures = fileResults.some(r => r.error);
+      if (completedCount === 0) {
+        await base44.asServiceRole.entities.AccountingReport.update(report_id, { status: 'failed' });
+        return Response.json({ error: 'All files failed extraction', status: 500 });
+      }
+
+      // Build reconciliation + all reports with whatever was extracted
       const reconciliations = fileResults.map(fr => reconcile(fr, allTxs));
       const totalDebits = allTxs.reduce((s,t) => s+(t.debit_amount||0), 0);
       const totalCredits = allTxs.reduce((s,t) => s+(t.credit_amount||0), 0);
       const reviewCount = allTxs.filter(t => t.needs_review).length;
-      const avgConfidence = fileResults.length > 0 ? Math.round(fileResults.reduce((s,r) => s+(r.confidence_score||0), 0) / fileResults.length) : 0;
+      const avgConfidence = completedCount > 0 ? Math.round(fileResults.filter(r => !r.error).reduce((s,r) => s+(r.confidence_score||0), 0) / completedCount) : 0;
       const companyName = fileResults.find(r => r.company_name)?.company_name || null;
       const currency = fileResults.find(r => r.currency)?.currency || 'CAD';
       const dateFrom = fileResults.map(r => r.period_start).filter(Boolean).sort()[0] || null;
@@ -234,11 +258,9 @@ Deno.serve(async (req) => {
       const fileMetadata = fileResults.map(r => ({ file_name: r.file_name, document_type: r.document_type, institution_name: r.institution_name, account_number_masked: r.account_number_masked, company_name: r.company_name, period_start: r.period_start, period_end: r.period_end, opening_balance: r.opening_balance, closing_balance: r.closing_balance, tx_count: r.transactions?.length || 0, confidence_score: r.confidence_score, is_scanned: r.is_scanned, error: r.error || null }));
 
       await base44.asServiceRole.entities.AccountingReport.update(report_id, {
-        status: 'review',
+        status: hasFailures ? 'review' : 'completed',
         file_progress: JSON.stringify(progress),
         file_metadata: JSON.stringify(fileMetadata),
-        transactions_raw: JSON.stringify(allTxs),
-        transactions_reviewed: JSON.stringify(allTxs),
         bank_reconciliation: JSON.stringify(reconciliations),
         gl_report: JSON.stringify(buildGL(allTxs)),
         pl_report: JSON.stringify(buildPL(allTxs)),
@@ -258,7 +280,14 @@ Deno.serve(async (req) => {
         date_to: dateTo,
       });
 
-      return Response.json({ success: true, transaction_count: allTxs.length, review_count: reviewCount });
+      return Response.json({ 
+        success: true, 
+        transaction_count: allTxs.length, 
+        review_count: reviewCount,
+        completed_files: completedCount,
+        total_files: file_names.length,
+        has_failures: hasFailures,
+      });
     }
 
     // ── generate: re-generate reports from reviewed transactions ──

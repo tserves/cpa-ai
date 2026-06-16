@@ -136,15 +136,29 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
     toast({ title: '🚀 Extraction started', description: `Processing ${fileNames.length} file(s)…`, duration: 5000 });
     onCreated(record);
 
-    // Fire-and-forget: backend handles everything server-side (extract + reconcile + reports)
-    base44.functions.invoke('generateAccountingReports', {
+    // Fire-and-forget: backend handles everything server-side with 10-min timeout
+    const extractionPromise = base44.functions.invoke('generateAccountingReports', {
       mode: 'extract_all',
       report_id: record.id,
       file_urls: fileUrls,
       file_names: fileNames,
-    }).catch(async () => {
-      await base44.entities.AccountingReport.update(record.id, { status: 'failed' }).catch(() => {});
     });
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 600000));
+    Promise.race([extractionPromise, timeoutPromise])
+      .then(res => {
+        if (res?.data?.success) {
+          toast({ 
+            title: res.data.has_failures ? '⚠️ Completed with warnings' : '✅ Extraction complete', 
+            description: `${res.data.transaction_count} transactions · ${res.data.review_count} need review`, 
+            duration: 5000 
+          });
+        } else {
+          toast({ title: '❌ Extraction failed', description: res?.data?.error, variant: 'destructive', duration: 5000 });
+        }
+      })
+      .catch(async () => {
+        toast({ title: '❌ Timeout', description: 'Processing took >10 min. Check session for partial results.', variant: 'destructive', duration: 5000 });
+      });
   };
 
   return (
