@@ -203,7 +203,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { mode } = body;
 
-    // ── extract_all: process all files + auto-generate all reports in one call ──
+    // ── extract_all: process all files in parallel + auto-generate all reports ──
     if (mode === 'extract_all') {
       const { report_id, file_urls, file_names } = body;
       if (!report_id || !file_urls?.length) return Response.json({ error: 'Missing report_id or file_urls' }, { status: 400 });
@@ -211,40 +211,38 @@ Deno.serve(async (req) => {
       let progress = file_names.map((name, i) => ({ name, index: i, status: 'pending', tx_count: 0 }));
       await base44.asServiceRole.entities.AccountingReport.update(report_id, { status: 'extracting', file_progress: JSON.stringify(progress) });
 
-      const allTxs = [], fileResults = [];
-      let completedCount = 0;
-      for (let i = 0; i < file_urls.length; i++) {
-        progress[i].status = 'processing';
+      // Process all files in parallel for speed
+      const extractWithProgress = async (url, name, index) => {
+        progress[index].status = 'processing';
         await base44.asServiceRole.entities.AccountingReport.update(report_id, { file_progress: JSON.stringify(progress) });
         try {
-          const result = await extractFile(base44, file_urls[i], file_names[i], i);
-          allTxs.push(...result.transactions);
-          fileResults.push(result);
-          progress[i].status = 'done';
-          progress[i].tx_count = result.transactions.length;
-          progress[i].confidence = result.confidence_score;
-          completedCount++;
+          const result = await extractFile(base44, url, name, index);
+          progress[index].status = 'done';
+          progress[index].tx_count = result.transactions.length;
+          progress[index].confidence = result.confidence_score;
+          await base44.asServiceRole.entities.AccountingReport.update(report_id, { file_progress: JSON.stringify(progress) });
+          return { success: true, result, transactions: result.transactions };
         } catch (e) {
-          fileResults.push({ file_name: file_names[i], transactions: [], confidence_score: 0, error: e.message });
-          progress[i].status = 'failed';
-          progress[i].error = e.message;
+          progress[index].status = 'failed';
+          progress[index].error = e.message;
+          await base44.asServiceRole.entities.AccountingReport.update(report_id, { file_progress: JSON.stringify(progress) });
+          return { success: false, error: e.message, file_name: name, transactions: [] };
         }
-        // Save partial results after each file - protects against total loss on timeout
-        await base44.asServiceRole.entities.AccountingReport.update(report_id, { 
-          file_progress: JSON.stringify(progress), 
-          transaction_count: allTxs.length,
-          transactions_raw: JSON.stringify(allTxs),
-          transactions_reviewed: JSON.stringify(allTxs),
-        });
-      }
+      };
 
-      const hasFailures = fileResults.some(r => r.error);
+      const results = await Promise.all(file_urls.map((url, i) => extractWithProgress(url, file_names[i], i)));
+      
+      const allTxs = results.flatMap(r => r.transactions);
+      const fileResults = results.map(r => r.success ? r.result : { file_name: r.file_name, transactions: [], confidence_score: 0, error: r.error });
+      const completedCount = results.filter(r => r.success).length;
+      const hasFailures = results.some(r => !r.success);
+
       if (completedCount === 0) {
         await base44.asServiceRole.entities.AccountingReport.update(report_id, { status: 'failed' });
         return Response.json({ error: 'All files failed extraction', status: 500 });
       }
 
-      // Build reconciliation + all reports with whatever was extracted
+      // Build reconciliation + all reports
       const reconciliations = fileResults.map(fr => reconcile(fr, allTxs));
       const totalDebits = allTxs.reduce((s,t) => s+(t.debit_amount||0), 0);
       const totalCredits = allTxs.reduce((s,t) => s+(t.credit_amount||0), 0);
