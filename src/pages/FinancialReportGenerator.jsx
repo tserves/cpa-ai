@@ -126,13 +126,13 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-primary" /> New Financial Report Session
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-2">
+        <div className="space-y-4 py-2 overflow-y-auto flex-1">
           <div>
             <Label>Session Name *</Label>
             <Input
@@ -535,6 +535,27 @@ export default function FinancialReportGenerator() {
   const [search, setSearch] = useState('');
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Realtime notification when any session finishes extracting
+  useEffect(() => {
+    const unsubscribe = base44.entities.FinancialReport.subscribe((event) => {
+      if (event.type === 'update') {
+        const { data, old_data } = event;
+        const wasProcessing = old_data?.status === 'extracting' || old_data?.status === 'generating';
+        const isDone = data?.status === 'review' || data?.status === 'completed' || data?.status === 'failed';
+        if (wasProcessing && isDone) {
+          const name = data.session_name || 'Session';
+          if (data.status === 'failed') {
+            toast({ title: `❌ ${name} — processing failed`, variant: 'destructive' });
+          } else {
+            toast({ title: `✅ ${name} — extraction complete`, description: `${data.transaction_count || 0} transactions ready for review.` });
+          }
+          queryClient.invalidateQueries({ queryKey: ['financial-reports'] });
+        }
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const { data: sessions = [], isLoading, refetch } = useQuery({
     queryKey: ['financial-reports'],

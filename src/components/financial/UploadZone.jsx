@@ -72,7 +72,7 @@ export default function UploadZone({ files, onFilesChange }) {
       </div>
 
       {files.length > 0 && (
-        <div className="rounded-xl border bg-card divide-y">
+        <div className="rounded-xl border bg-card divide-y max-h-52 overflow-y-auto">
           {files.map((file, idx) => (
             <div key={idx} className="flex items-center gap-3 px-4 py-2.5">
               {getFileIcon(file.name)}
