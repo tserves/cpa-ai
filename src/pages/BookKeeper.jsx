@@ -143,27 +143,36 @@ function NewSessionDialog({ open, onOpenChange, onCreated }) {
 
     toast({ title: '✅ Files classified — starting extraction…', duration: 5000 });
 
-    // Step 2: extract
-    const extractionPromise = base44.functions.invoke('bookKeeperProcess', {
-      mode: 'extract_all', session_id: record.id, file_urls: fileUrls, file_names: fileNames,
-      file_classifications: classRes.data.classifications,
-    });
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 600000));
-    Promise.race([extractionPromise, timeoutPromise])
-      .then(res => {
-        if (res?.data?.success) {
-          toast({
-            title: res.data.has_failures ? '⚠️ Completed with some errors' : '✅ Extraction & reconciliation complete',
-            description: `${res.data.transaction_count} transactions · ${res.data.review_count} need review`,
-            duration: 5000
+    // Step 2: extract files one by one
+    const extractLoop = async () => {
+      try {
+        let done = false;
+        let fileCount = 0;
+        while (!done) {
+          const res = await base44.functions.invoke('bookKeeperProcess', {
+            mode: 'extract_one_by_one', session_id: record.id, file_urls: fileUrls, file_names: fileNames,
+            file_classifications: classRes.data.classifications,
           });
-        } else {
-          toast({ title: '❌ Extraction failed', description: res?.data?.error, variant: 'destructive', duration: 5000 });
+          if (res?.data?.done) {
+            done = true;
+            toast({
+              title: '✅ Extraction & reconciliation complete',
+              description: `${res.data.transaction_count} transactions · ${res.data.review_count} need review`,
+              duration: 5000
+            });
+          } else if (res?.data?.success) {
+            fileCount++;
+            toast({ title: `📄 File ${fileCount} extracted: ${res.data.transaction_count} transactions`, duration: 3000 });
+          } else {
+            fileCount++;
+            toast({ title: `⚠️ File ${fileCount} failed: ${res?.data?.error}`, variant: 'destructive', duration: 3000 });
+          }
         }
-      })
-      .catch(() => {
-        toast({ title: '⚠️ Timeout', description: 'Check session for partial results.', variant: 'destructive', duration: 5000 });
-      });
+      } catch (e) {
+        toast({ title: '❌ Extraction failed', description: e.message, variant: 'destructive', duration: 5000 });
+      }
+    };
+    extractLoop();
   };
 
   return (
@@ -286,19 +295,34 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
       mode: 'classify', session_id: session.id, file_urls: fileUrls, file_names: fNames,
     });
     if (!classRes?.data?.success) { toast({ title: '❌ Classification failed', variant: 'destructive', duration: 5000 }); return; }
-    // Step 2: extract
-    base44.functions.invoke('bookKeeperProcess', {
-      mode: 'extract_all', session_id: session.id, file_urls: fileUrls, file_names: fNames,
-      file_classifications: classRes.data.classifications,
-    }).then(res => {
-      if (res?.data?.success) {
-        toast({ title: '✅ Re-extraction complete', description: `${res.data.transaction_count} transactions extracted`, duration: 5000 });
-        queryClient.invalidateQueries({ queryKey: ['bk-detail', session.id] });
-        onRefresh();
-      } else {
-        toast({ title: '❌ Extraction failed', description: res?.data?.error, variant: 'destructive', duration: 5000 });
+    // Step 2: extract files one by one
+    const extractLoop = async () => {
+      try {
+        let done = false;
+        let fileCount = 0;
+        while (!done) {
+          const res = await base44.functions.invoke('bookKeeperProcess', {
+            mode: 'extract_one_by_one', session_id: session.id, file_urls: fileUrls, file_names: fNames,
+            file_classifications: classRes.data.classifications,
+          });
+          if (res?.data?.done) {
+            done = true;
+            toast({ title: '✅ Re-extraction complete', description: `${res.data.transaction_count} transactions extracted`, duration: 5000 });
+            queryClient.invalidateQueries({ queryKey: ['bk-detail', session.id] });
+            onRefresh();
+          } else if (res?.data?.success) {
+            fileCount++;
+            toast({ title: `📄 File ${fileCount} extracted: ${res.data.transaction_count} transactions`, duration: 3000 });
+          } else {
+            fileCount++;
+            toast({ title: `⚠️ File ${fileCount} failed: ${res?.data?.error}`, variant: 'destructive', duration: 3000 });
+          }
+        }
+      } catch (e) {
+        toast({ title: '❌ Extraction failed', description: e.message, variant: 'destructive', duration: 5000 });
       }
-    });
+    };
+    extractLoop();
   };
 
   const handleExport = type => {

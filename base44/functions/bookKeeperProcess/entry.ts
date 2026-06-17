@@ -399,115 +399,171 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, classifications });
     }
 
-    // ── EXTRACT_ALL: extract files sequentially to avoid 90s platform timeout ──
+    // ── EXTRACT_ALL: extract files one at a time, each in its own function invocation ──
     if (mode === 'extract_all') {
       const { session_id, file_urls, file_names, file_classifications } = body;
       if (!session_id || !file_urls?.length) return Response.json({ error: 'Missing session_id or file_urls' }, { status: 400 });
 
       let progress = file_names.map((name, i) => ({ name, index: i, status: 'pending', tx_count: 0 }));
-      await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'extracting', file_progress: JSON.stringify(progress) });
+      await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'extracting', file_progress: JSON.stringify(progress), transactions_raw: '[]', file_metadata: '[]' });
 
-      const allTxs = [];
-      const fileResults = [];
-      let completedCount = 0;
-      let failedCount = 0;
-
-      // Process files ONE AT A TIME to stay under 90s timeout
-      for (let i = 0; i < file_urls.length; i++) {
-        const url = file_urls[i];
-        const name = file_names[i];
-        const docType = file_classifications?.[i]?.document_type || null;
-        
-        progress[i].status = 'processing';
-        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-        
-        try {
-          console.log(`Extracting file ${i+1}/${file_urls.length}: ${name}`);
-          const result = await extractFile(base44, url, name, i, docType);
-          progress[i].status = 'done';
-          progress[i].tx_count = result.transactions.length;
-          progress[i].confidence = result.confidence_score;
-          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-          
-          allTxs.push(...result.transactions);
-          fileResults.push(result);
-          completedCount++;
-          console.log(`File ${i+1} complete: ${result.transactions.length} transactions`);
-        } catch (e) {
-          progress[i].status = 'failed';
-          progress[i].error = e.message;
-          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-          fileResults.push({ file_name: name, transactions: [], confidence_score: 0, error: e.message });
-          failedCount++;
-          console.error(`File ${i+1} failed: ${e.message}`);
-        }
-      }
-
-      console.log(`Extraction complete: ${completedCount} succeeded, ${failedCount} failed, ${allTxs.length} total transactions`);
-
-      if (completedCount === 0) {
-        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'failed' });
-        return Response.json({ error: 'All files failed extraction' }, { status: 500 });
-      }
-
-      // Reconcile + build all reports
-      const bankRecon = fileResults.map(fr => reconcileFile(fr, allTxs));
-      const totalDebits = allTxs.reduce((s, t) => s + (t.debit_amount || 0), 0);
-      const totalCredits = allTxs.reduce((s, t) => s + (t.credit_amount || 0), 0);
-      const reviewCount = allTxs.filter(t => t.needs_review).length;
-      const duplicateCount = allTxs.filter(t => t.is_duplicate).length;
-      const uncatCount = allTxs.filter(t => !t.category || t.category === 'uncategorized').length;
-      const matchedCount = allTxs.filter(t => t.category && t.category !== 'uncategorized' && !t.is_duplicate).length;
-      const avgConf = completedCount > 0 ? Math.round(fileResults.filter(r => !r.error).reduce((s, r) => s + (r.confidence_score || 0), 0) / completedCount) : 0;
-      const companyName = fileResults.find(r => r.company_name)?.company_name || null;
-      const currency = fileResults.find(r => r.currency)?.currency || 'CAD';
-      const dateFrom = fileResults.map(r => r.period_start).filter(Boolean).sort()[0] || null;
-      const dateTo = fileResults.map(r => r.period_end).filter(Boolean).sort().reverse()[0] || null;
-
-      const reconSummary = {
-        total_files: fileResults.length,
-        reconciled_files: bankRecon.filter(r => r.status === 'reconciled').length,
-        unreconciled_files: bankRecon.filter(r => r.status !== 'reconciled').length,
-        total_matched: matchedCount,
-        total_unmatched: uncatCount,
-        total_duplicates: duplicateCount,
-        total_review_flagged: reviewCount,
-        completion_pct: allTxs.length > 0 ? Math.round((matchedCount / allTxs.length) * 100) : 0,
-      };
-
+      const auditEntry = { action: 'extraction_started', timestamp: new Date().toISOString(), file_count: file_names.length };
       const auditRec = await base44.asServiceRole.entities.BookKeeperSession.get(session_id);
       const audit = JSON.parse(auditRec?.audit_trail || '[]');
-      audit.push({ action: 'extraction_completed', timestamp: new Date().toISOString(), transaction_count: allTxs.length, files_succeeded: completedCount, files_failed: failedCount });
+      audit.push(auditEntry);
+      await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { audit_trail: JSON.stringify(audit) });
 
-      await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
-        status: 'review',
-        file_progress: JSON.stringify(progress),
-        transactions_raw: JSON.stringify(allTxs),
-        bank_reconciliation: JSON.stringify(bankRecon),
-        reconciliation_results: JSON.stringify(reconSummary),
-        gl_report: JSON.stringify(buildGL(allTxs)),
-        pl_report: JSON.stringify(buildPL(allTxs)),
-        trial_balance: JSON.stringify(buildTrialBalance(allTxs)),
-        transaction_summary: JSON.stringify(buildMonthlySummary(allTxs)),
-        review_items_report: JSON.stringify(buildReviewItems(allTxs)),
-        reports_generated: JSON.stringify(['gl', 'pl', 'trial_balance', 'monthly_summary', 'review_items']),
-        total_debits: totalDebits,
-        total_credits: totalCredits,
-        transaction_count: allTxs.length,
-        matched_count: matchedCount,
-        unmatched_count: reviewCount,
-        duplicate_count: duplicateCount,
-        review_count: reviewCount,
-        uncategorized_count: uncatCount,
-        confidence_score: avgConf,
-        company_name: companyName,
-        currency,
-        date_from: dateFrom,
-        date_to: dateTo,
-        audit_trail: JSON.stringify(audit),
+      // Return immediately - frontend will call extract_one_by_one repeatedly
+      return Response.json({ 
+        success: true, 
+        message: 'Extraction initialized. Call extract_one_by_one to process each file.',
+        total_files: file_urls.length 
       });
+    }
 
-      return Response.json({ success: true, transaction_count: allTxs.length, review_count: reviewCount, completed_files: completedCount, has_failures: failedCount > 0 });
+    // ── EXTRACT_ONE_BY_ONE: process next pending file (called repeatedly by frontend) ──
+    if (mode === 'extract_one_by_one') {
+      const { session_id, file_urls, file_names, file_classifications } = body;
+      if (!session_id || !file_urls?.length) return Response.json({ error: 'Missing session_id or file_urls' }, { status: 400 });
+
+      const session = await base44.asServiceRole.entities.BookKeeperSession.get(session_id);
+      if (!session) return Response.json({ error: 'Session not found' }, { status: 404 });
+
+      let progress = JSON.parse(session.file_progress || '[]');
+      let allTxs = JSON.parse(session.transactions_raw || '[]');
+      let fileResults = JSON.parse(session.file_metadata || '[]');
+      let audit = JSON.parse(session.audit_trail || '[]');
+
+      // Find next pending/processing file
+      const nextIdx = progress.findIndex(p => p.status === 'pending' || p.status === 'processing');
+      if (nextIdx === -1) {
+        // All files done - build final reports
+        const completedCount = progress.filter(p => p.status === 'done').length;
+        const failedCount = progress.filter(p => p.status === 'failed').length;
+
+        if (completedCount === 0) {
+          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'failed' });
+          return Response.json({ error: 'All files failed extraction', done: true }, { status: 500 });
+        }
+
+        // Build all reports
+        const bankRecon = fileResults.map(fr => reconcileFile(fr, allTxs));
+        const totalDebits = allTxs.reduce((s, t) => s + (t.debit_amount || 0), 0);
+        const totalCredits = allTxs.reduce((s, t) => s + (t.credit_amount || 0), 0);
+        const reviewCount = allTxs.filter(t => t.needs_review).length;
+        const duplicateCount = allTxs.filter(t => t.is_duplicate).length;
+        const uncatCount = allTxs.filter(t => !t.category || t.category === 'uncategorized').length;
+        const matchedCount = allTxs.filter(t => t.category && t.category !== 'uncategorized' && !t.is_duplicate).length;
+        const avgConf = completedCount > 0 ? Math.round(fileResults.filter(r => !r.error).reduce((s, r) => s + (r.confidence_score || 0), 0) / completedCount) : 0;
+        const companyName = fileResults.find(r => r.company_name)?.company_name || null;
+        const currency = fileResults.find(r => r.currency)?.currency || 'CAD';
+        const dateFrom = fileResults.map(r => r.period_start).filter(Boolean).sort()[0] || null;
+        const dateTo = fileResults.map(r => r.period_end).filter(Boolean).sort().reverse()[0] || null;
+
+        const reconSummary = {
+          total_files: fileResults.length,
+          reconciled_files: bankRecon.filter(r => r.status === 'reconciled').length,
+          unreconciled_files: bankRecon.filter(r => r.status !== 'reconciled').length,
+          total_matched: matchedCount,
+          total_unmatched: uncatCount,
+          total_duplicates: duplicateCount,
+          total_review_flagged: reviewCount,
+          completion_pct: allTxs.length > 0 ? Math.round((matchedCount / allTxs.length) * 100) : 0,
+        };
+
+        audit.push({ action: 'extraction_completed', timestamp: new Date().toISOString(), transaction_count: allTxs.length, files_succeeded: completedCount, files_failed: failedCount });
+
+        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
+          status: 'review',
+          transactions_raw: JSON.stringify(allTxs),
+          bank_reconciliation: JSON.stringify(bankRecon),
+          reconciliation_results: JSON.stringify(reconSummary),
+          gl_report: JSON.stringify(buildGL(allTxs)),
+          pl_report: JSON.stringify(buildPL(allTxs)),
+          trial_balance: JSON.stringify(buildTrialBalance(allTxs)),
+          transaction_summary: JSON.stringify(buildMonthlySummary(allTxs)),
+          review_items_report: JSON.stringify(buildReviewItems(allTxs)),
+          reports_generated: JSON.stringify(['gl', 'pl', 'trial_balance', 'monthly_summary', 'review_items']),
+          total_debits: totalDebits,
+          total_credits: totalCredits,
+          transaction_count: allTxs.length,
+          matched_count: matchedCount,
+          unmatched_count: reviewCount,
+          duplicate_count: duplicateCount,
+          review_count: reviewCount,
+          uncategorized_count: uncatCount,
+          confidence_score: avgConf,
+          company_name: companyName,
+          currency,
+          date_from: dateFrom,
+          date_to: dateTo,
+          audit_trail: JSON.stringify(audit),
+        });
+
+        return Response.json({ 
+          success: true, 
+          done: true, 
+          transaction_count: allTxs.length, 
+          review_count: reviewCount,
+          completed_files: completedCount 
+        });
+      }
+
+      // Process this file
+      const url = file_urls[nextIdx];
+      const name = file_names[nextIdx];
+      const docType = file_classifications?.[nextIdx]?.document_type || null;
+      
+      progress[nextIdx].status = 'processing';
+      await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
+      
+      try {
+        console.log(`Extracting file ${nextIdx+1}/${file_urls.length}: ${name}`);
+        const result = await extractFile(base44, url, name, nextIdx, docType);
+        progress[nextIdx].status = 'done';
+        progress[nextIdx].tx_count = result.transactions.length;
+        progress[nextIdx].confidence = result.confidence_score;
+        
+        allTxs.push(...result.transactions);
+        fileResults.push(result);
+        audit.push({ action: 'file_extracted', timestamp: new Date().toISOString(), file: name, transactions: result.transactions.length });
+        
+        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
+          file_progress: JSON.stringify(progress),
+          transactions_raw: JSON.stringify(allTxs),
+          file_metadata: JSON.stringify(fileResults),
+          audit_trail: JSON.stringify(audit),
+        });
+        
+        console.log(`File ${nextIdx+1} complete: ${result.transactions.length} transactions`);
+        return Response.json({ 
+          success: true, 
+          done: false, 
+          file_index: nextIdx, 
+          file_name: name,
+          transaction_count: result.transactions.length,
+          total_transactions: allTxs.length 
+        });
+      } catch (e) {
+        progress[nextIdx].status = 'failed';
+        progress[nextIdx].error = e.message;
+        fileResults.push({ file_name: name, transactions: [], confidence_score: 0, error: e.message });
+        audit.push({ action: 'file_failed', timestamp: new Date().toISOString(), file: name, error: e.message });
+        
+        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
+          file_progress: JSON.stringify(progress),
+          file_metadata: JSON.stringify(fileResults),
+          audit_trail: JSON.stringify(audit),
+        });
+        
+        console.error(`File ${nextIdx+1} failed: ${e.message}`);
+        return Response.json({ 
+          success: false, 
+          done: false, 
+          file_index: nextIdx, 
+          error: e.message 
+        });
+      }
     }
 
     // ── REGENERATE: rebuild reports from reviewed transactions ──
