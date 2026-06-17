@@ -188,56 +188,40 @@ async function extractFile(base44, url, fileName, fileIndex, docType) {
   const isPDF = ext === 'pdf';
   const isExcel = ['xlsx','xls'].includes(ext);
   const isCSV = ext === 'csv';
-  const fileType = isExcel ? 'Excel spreadsheet' : isCSV ? 'CSV file' : isPDF ? 'PDF document' : isImage ? 'scanned image/document' : 'financial document';
-
-  // Use gemini_3_1_pro for full OCR on scanned PDFs and images; gemini_3_flash for structured files
+  const fileType = isExcel ? 'Excel spreadsheet' : isCSV ? 'CSV file' : isPDF ? 'PDF document' : isImage ? 'scanned image' : 'financial document';
   const model = (isImage || isPDF) ? 'gemini_3_1_pro' : 'gemini_3_flash';
 
-  const prompt = `You are an expert CPA and bookkeeper with OCR capability. Extract ALL financial transactions from this ${fileType}: "${fileName}".
-Document type: ${docType || 'financial document'}
-
-${isImage || isPDF ? `IMPORTANT: This may be a scanned document. Use full OCR to read every character. Do not skip any row, even if text appears faint, rotated, or partially legible. Flag low-legibility items with needs_review=true.` : ''}
+  const prompt = `You are an expert bookkeeper. Extract ALL transactions from this ${fileType}: "${fileName}".
 
 Return JSON with:
-- document_type, institution_name, account_number_masked (last 4 only), company_name, accounting_basis (cash|accrual|unknown)
-- period_start/period_end: YYYY-MM-DD
-- opening_balance, closing_balance, statement_total_credits, statement_total_debits (numbers or null)
-- currency: ISO code (default CAD), confidence_score: 0-100
-- transactions: array of ALL rows, each with:
-  tx_id: "F${fileIndex}-TX-NNN" (sequential NNN padded to 3 digits)
+- document_type, institution_name, company_name, period_start, period_end (YYYY-MM-DD)
+- opening_balance, closing_balance, statement_total_credits, statement_total_debits, currency, confidence_score (0-100)
+- transactions: array of ALL rows with:
+  tx_id: "F${fileIndex}-TX-NNN" (sequential)
   transaction_date: YYYY-MM-DD
-  posting_date: YYYY-MM-DD or null
-  description: full description as written on statement
-  vendor_or_customer: extracted merchant/payee/payer name or null
-  reference_number: cheque number, reference, or authorization number or null
-  cheque_number: cheque number if present, else null
-  debit_amount: positive number (money OUT / withdrawal / charge) or null
-  credit_amount: positive number (money IN / deposit / payment) or null
-  running_balance: running balance after this transaction or null
-  tax_amount: GST/HST/tax portion if visible or null
-  source_file: "${fileName}"
-  source_page: page number where this row appeared or null
-  confidence: 0.0-1.0 (your extraction confidence for this row — most clear transactions should be 0.9+)
-  needs_review: ONLY set true if the amount is illegible, direction (debit vs credit) is genuinely unclear, or the row is partially cut off. DO NOT flag for review just because the category is unknown.
-  review_reason: specific reason only if needs_review is true, else null
-  category: best-guess from: revenue|other_income|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|owner_drawings|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
+  description: exact text from document
+  vendor_or_customer: merchant/payee name
+  debit_amount: positive number (money OUT) or null
+  credit_amount: positive number (money IN) or null
+  category: one of: revenue|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
+  needs_review: true only if amount illegible
+  review_reason: why it needs review
+  confidence: 0.0-1.0
 
-EXTRACTION RULES:
-- Extract EVERY transaction row without exception
-- Skip only pure header, footer, or page-break rows
-- Deposits / credits / payments IN = credit_amount
-- Withdrawals / charges / payments OUT = debit_amount
-- Most transactions have a clear direction — only set needs_review=true for genuinely ambiguous amounts or illegible OCR
-- NEVER fabricate amounts you cannot read; set needs_review=true only in that case
-- Preserve exact description text as it appears on the document
-- Set confidence >= 0.9 for clearly readable rows, 0.7-0.9 for slightly unclear, below 0.7 only for seriously degraded text`;
+Rules:
+- Extract EVERY transaction row
+- debit = money OUT, credit = money IN (both positive)
+- Most rows should have confidence >= 0.9
+- Only needs_review=true for genuinely illegible amounts`;
 
-  const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), 120000));
+  const timeoutMs = 90000;
+  const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), timeoutMs));
   const extractPromise = base44.asServiceRole.integrations.Core.InvokeLLM({
     prompt, file_urls: [url], model, response_json_schema: EXTRACT_SCHEMA,
   });
   const result = await Promise.race([extractPromise, timeoutPromise]);
 
+  console.log(`Extracted ${result.transactions?.length || 0} transactions from ${fileName}`);
   const txs = detectDuplicates((result.transactions || []).map(tx => categorize(tx)));
   return { ...result, transactions: txs, file_name: fileName, ocr_model: model };
 }
@@ -415,7 +399,7 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, classifications });
     }
 
-    // ── EXTRACT_ALL: extract all approved files in parallel ──
+    // ── EXTRACT_ALL: extract files sequentially to avoid 90s platform timeout ──
     if (mode === 'extract_all') {
       const { session_id, file_urls, file_names, file_classifications } = body;
       if (!session_id || !file_urls?.length) return Response.json({ error: 'Missing session_id or file_urls' }, { status: 400 });
@@ -423,29 +407,43 @@ Deno.serve(async (req) => {
       let progress = file_names.map((name, i) => ({ name, index: i, status: 'pending', tx_count: 0 }));
       await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'extracting', file_progress: JSON.stringify(progress) });
 
-      const extractWithProgress = async (url, name, index) => {
-        progress[index].status = 'processing';
-        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-        const docType = file_classifications?.[index]?.document_type || null;
-        try {
-          const result = await extractFile(base44, url, name, index, docType);
-          progress[index].status = 'done';
-          progress[index].tx_count = result.transactions.length;
-          progress[index].confidence = result.confidence_score;
-          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-          return { success: true, result, transactions: result.transactions };
-        } catch (e) {
-          progress[index].status = 'failed';
-          progress[index].error = e.message;
-          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
-          return { success: false, error: e.message, file_name: name, transactions: [] };
-        }
-      };
+      const allTxs = [];
+      const fileResults = [];
+      let completedCount = 0;
+      let failedCount = 0;
 
-      const results = await Promise.all(file_urls.map((url, i) => extractWithProgress(url, file_names[i], i)));
-      const allTxs = results.flatMap(r => r.transactions);
-      const fileResults = results.map(r => r.success ? r.result : { file_name: r.file_name, transactions: [], confidence_score: 0, error: r.error });
-      const completedCount = results.filter(r => r.success).length;
+      // Process files ONE AT A TIME to stay under 90s timeout
+      for (let i = 0; i < file_urls.length; i++) {
+        const url = file_urls[i];
+        const name = file_names[i];
+        const docType = file_classifications?.[i]?.document_type || null;
+        
+        progress[i].status = 'processing';
+        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
+        
+        try {
+          console.log(`Extracting file ${i+1}/${file_urls.length}: ${name}`);
+          const result = await extractFile(base44, url, name, i, docType);
+          progress[i].status = 'done';
+          progress[i].tx_count = result.transactions.length;
+          progress[i].confidence = result.confidence_score;
+          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
+          
+          allTxs.push(...result.transactions);
+          fileResults.push(result);
+          completedCount++;
+          console.log(`File ${i+1} complete: ${result.transactions.length} transactions`);
+        } catch (e) {
+          progress[i].status = 'failed';
+          progress[i].error = e.message;
+          await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { file_progress: JSON.stringify(progress) });
+          fileResults.push({ file_name: name, transactions: [], confidence_score: 0, error: e.message });
+          failedCount++;
+          console.error(`File ${i+1} failed: ${e.message}`);
+        }
+      }
+
+      console.log(`Extraction complete: ${completedCount} succeeded, ${failedCount} failed, ${allTxs.length} total transactions`);
 
       if (completedCount === 0) {
         await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { status: 'failed' });
@@ -459,7 +457,6 @@ Deno.serve(async (req) => {
       const reviewCount = allTxs.filter(t => t.needs_review).length;
       const duplicateCount = allTxs.filter(t => t.is_duplicate).length;
       const uncatCount = allTxs.filter(t => !t.category || t.category === 'uncategorized').length;
-      // Matched = categorized + not a duplicate (review flags are advisory, not blocking)
       const matchedCount = allTxs.filter(t => t.category && t.category !== 'uncategorized' && !t.is_duplicate).length;
       const avgConf = completedCount > 0 ? Math.round(fileResults.filter(r => !r.error).reduce((s, r) => s + (r.confidence_score || 0), 0) / completedCount) : 0;
       const companyName = fileResults.find(r => r.company_name)?.company_name || null;
@@ -480,7 +477,7 @@ Deno.serve(async (req) => {
 
       const auditRec = await base44.asServiceRole.entities.BookKeeperSession.get(session_id);
       const audit = JSON.parse(auditRec?.audit_trail || '[]');
-      audit.push({ action: 'extraction_completed', timestamp: new Date().toISOString(), transaction_count: allTxs.length, files_succeeded: completedCount, files_failed: results.length - completedCount });
+      audit.push({ action: 'extraction_completed', timestamp: new Date().toISOString(), transaction_count: allTxs.length, files_succeeded: completedCount, files_failed: failedCount });
 
       await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
         status: 'review',
@@ -510,7 +507,7 @@ Deno.serve(async (req) => {
         audit_trail: JSON.stringify(audit),
       });
 
-      return Response.json({ success: true, transaction_count: allTxs.length, review_count: reviewCount, completed_files: completedCount, has_failures: results.some(r => !r.success) });
+      return Response.json({ success: true, transaction_count: allTxs.length, review_count: reviewCount, completed_files: completedCount, has_failures: failedCount > 0 });
     }
 
     // ── REGENERATE: rebuild reports from reviewed transactions ──
