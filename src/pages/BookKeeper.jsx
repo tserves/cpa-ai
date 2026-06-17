@@ -217,7 +217,7 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
 
   const { data: liveSession } = useQuery({
     queryKey: ['bk-detail', init.id],
-    queryFn: async () => { try { const r = await base44.entities.BookKeeperSession.filter({ id: init.id }); return r[0] || init; } catch { return init; } },
+    queryFn: async () => { try { return await base44.entities.BookKeeperSession.get(init.id); } catch { return init; } },
     refetchInterval: q => ['classifying','extracting','reconciling','uploading','generating'].includes(q.state.data?.status || init.status) ? 1500 : false,
     initialData: init,
   });
@@ -651,10 +651,10 @@ export default function BookKeeper() {
   };
 
   const handleCreated = record => { queryClient.invalidateQueries({ queryKey: ['bookkeeper-sessions'] }); setActiveSession(record); };
-  const handleOpen = async session => { try { const r = await base44.entities.BookKeeperSession.filter({ id: session.id }); setActiveSession(r[0] || session); } catch { setActiveSession(session); } };
+  const handleOpen = async session => { try { const r = await base44.entities.BookKeeperSession.get(session.id); setActiveSession(r || session); } catch { setActiveSession(session); } };
   const handleRefresh = async () => {
     if (!activeSession) return;
-    try { const r = await base44.entities.BookKeeperSession.filter({ id: activeSession.id }); if (r?.length) setActiveSession(r[0]); } catch {}
+    try { const r = await base44.entities.BookKeeperSession.get(activeSession.id); if (r) setActiveSession(r); } catch {}
     queryClient.invalidateQueries({ queryKey: ['bookkeeper-sessions'] });
   };
 
