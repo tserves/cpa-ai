@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { RefreshCw, CheckCircle2, AlertTriangle, Download, Scale, TrendingUp, TrendingDown, Calendar, BarChart2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-const fmt = n => n != null ? `$${Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+const fmt = n => (n != null && n !== '' && !isNaN(Number(n))) ? `$${Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00';
 
 const CATEGORIES = [
   'revenue', 'cost_of_goods_sold', 'operating_expenses', 'payroll',
