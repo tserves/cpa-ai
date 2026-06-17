@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,13 +10,20 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } fro
 
 const fmt = n => n != null ? `$${Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
+const CATEGORIES = [
+  'revenue', 'cost_of_goods_sold', 'operating_expenses', 'payroll',
+  'rent', 'utilities', 'office_supplies', 'travel', 'meals_entertainment',
+  'professional_fees', 'bank_charges', 'interest_expense', 'tax_payments',
+  'owner_drawings', 'accounts_receivable', 'accounts_payable',
+  'loan_payments', 'equipment', 'depreciation', 'transfers', 'other',
+];
+
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: filename });
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-// Generate period options from transaction data
 function buildPeriodOptions(transactions) {
   const months = new Set(), years = new Set(), quarters = new Set();
   transactions.forEach(tx => {
@@ -37,22 +44,13 @@ function buildPeriodOptions(transactions) {
   };
 }
 
-const PERIOD_LABELS = {
-  monthly: 'Monthly',
-  quarterly: 'Quarterly',
-  yearly: 'Yearly',
-  custom: 'Custom Range',
-};
-
+const PERIOD_LABELS = { monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly', custom: 'Custom Range' };
 const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function fmtPeriodLabel(type, value) {
   if (!value) return '';
-  if (type === 'monthly') {
-    const [y, m] = value.split('-');
-    return `${MONTH_NAMES[parseInt(m)]} ${y}`;
-  }
-  if (type === 'quarterly') return value.replace('-', ' ').replace('Q', 'Q');
+  if (type === 'monthly') { const [y, m] = value.split('-'); return `${MONTH_NAMES[parseInt(m)]} ${y}`; }
+  if (type === 'quarterly') return value.replace('-', ' ');
   if (type === 'yearly') return `FY ${value}`;
   return value;
 }
@@ -80,18 +78,28 @@ export default function BKPeriodReconciliation({ session, transactions }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  // Local category edits keyed by transaction index
+  const [catEdits, setCatEdits] = useState({});
 
   const options = useMemo(() => buildPeriodOptions(transactions), [transactions]);
 
-  // Auto-select latest period when type changes
+  // Auto-select latest period when options load or type changes
+  useEffect(() => {
+    if (periodType === 'monthly' && options.months.length && !periodValue) setPeriodValue(options.months[0]);
+    if (periodType === 'quarterly' && options.quarters.length && !periodValue) setPeriodValue(options.quarters[0]);
+    if (periodType === 'yearly' && options.years.length && !periodValue) setPeriodValue(options.years[0]);
+  }, [options, periodType]);
+
   const handleTypeChange = (type) => {
     setPeriodType(type);
-    setPeriodValue('');
     setResult(null);
     setError(null);
-    if (type === 'monthly' && options.months[0]) setPeriodValue(options.months[0]);
-    if (type === 'quarterly' && options.quarters[0]) setPeriodValue(options.quarters[0]);
-    if (type === 'yearly' && options.years[0]) setPeriodValue(options.years[0]);
+    setCatEdits({});
+    // Immediately set a default value for the new type
+    if (type === 'monthly') setPeriodValue(options.months[0] || '');
+    else if (type === 'quarterly') setPeriodValue(options.quarters[0] || '');
+    else if (type === 'yearly') setPeriodValue(options.years[0] || '');
+    else setPeriodValue('');
   };
 
   const handleRun = async () => {
@@ -100,6 +108,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
     setLoading(true);
     setError(null);
     setResult(null);
+    setCatEdits({});
     try {
       const res = await base44.functions.invoke('bookKeeperProcess', {
         mode: 'reconcile_period',
@@ -119,46 +128,25 @@ export default function BKPeriodReconciliation({ session, transactions }) {
 
   const handleExport = () => {
     if (!result) return;
+    const txRows = (result.transactions || []).map((t, i) => [
+      t.transaction_date || '', t.description || '', t.vendor_or_customer || '',
+      t.reference_number || '', t.debit_amount || '', t.credit_amount || '',
+      catEdits[i] || t.category || '', t.source_file || '', t.needs_review ? 'Yes' : 'No',
+    ]);
     const rows = [
       ['Period Reconciliation Report'],
       ['Session', session.session_name],
-      ['Company', session.company_name || ''],
-      ['Period Type', PERIOD_LABELS[result.period_type]],
       ['Period', fmtPeriodLabel(result.period_type, result.period_value)],
-      ['Date From', result.date_from || ''],
-      ['Date To', result.date_to || ''],
-      ['Generated', new Date().toLocaleString('en-CA')],
-      [],
-      ['SUMMARY'],
+      ['Date From', result.date_from || ''], ['Date To', result.date_to || ''],
+      [], ['SUMMARY'],
       ['Total Transactions', result.transaction_count],
-      ['Total Credits (IN)', result.total_credits?.toFixed(2)],
-      ['Total Debits (OUT)', result.total_debits?.toFixed(2)],
+      ['Credits (IN)', result.total_credits?.toFixed(2)],
+      ['Debits (OUT)', result.total_debits?.toFixed(2)],
       ['Net Activity', result.net_activity?.toFixed(2)],
-      ['Matched', result.matched_count],
-      ['Flagged for Review', result.review_count],
-      ['Duplicates', result.duplicate_count],
-      ['Uncategorized', result.uncategorized_count],
       ['Reconciliation %', `${result.reconciliation_pct}%`],
-      [],
-      ['ACCOUNT BREAKDOWN', '', '', ''],
-      ['Account', 'Category', 'Debits', 'Credits', 'Count'],
-      ...(result.account_breakdown || []).map(a => [a.account_name, a.category, a.debit_total?.toFixed(2), a.credit_total?.toFixed(2), a.count]),
-      [],
-      ['CATEGORY BREAKDOWN', '', '', ''],
-      ['Category', 'Debits', 'Credits', 'Count'],
-      ...(result.category_breakdown || []).map(c => [c.category, c.debit_total?.toFixed(2), c.credit_total?.toFixed(2), c.count]),
-      [],
-      ['MONTHLY BREAKDOWN', '', '', ''],
-      ['Month', 'Credits', 'Debits', 'Net', 'Transactions'],
-      ...(result.monthly_breakdown || []).map(m => [m.month, m.credit_total?.toFixed(2), m.debit_total?.toFixed(2), m.net?.toFixed(2), m.count]),
-      [],
-      ['TRANSACTIONS'],
-      ['Date', 'Description', 'Vendor', 'Reference', 'Debit', 'Credit', 'Category', 'Source File', 'Needs Review'],
-      ...(result.transactions || []).map(t => [
-        t.transaction_date || '', t.description || '', t.vendor_or_customer || '',
-        t.reference_number || '', t.debit_amount || '', t.credit_amount || '',
-        t.category || '', t.source_file || '', t.needs_review ? 'Yes' : 'No',
-      ]),
+      [], ['TRANSACTIONS'],
+      ['Date','Description','Vendor','Reference','Debit','Credit','Category','Source File','Needs Review'],
+      ...txRows,
     ];
     downloadCSV(rows, `Reconciliation_${session.session_name}_${result.period_value || 'custom'}.csv`);
   };
@@ -196,7 +184,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
                 <SelectTrigger className="h-9"><SelectValue placeholder="Select month…" /></SelectTrigger>
                 <SelectContent>
                   {options.months.map(m => (
-                    <SelectItem key={m} value={m} className="text-xs">{fmtPeriodLabel('monthly', m)}</SelectItem>
+                    <SelectItem key={m} value={m}>{fmtPeriodLabel('monthly', m)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -209,7 +197,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
                 <SelectTrigger className="h-9"><SelectValue placeholder="Select quarter…" /></SelectTrigger>
                 <SelectContent>
                   {options.quarters.map(q => (
-                    <SelectItem key={q} value={q} className="text-xs">{q.replace('-', ' ')}</SelectItem>
+                    <SelectItem key={q} value={q}>{q.replace('-', ' ')}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -222,7 +210,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
                 <SelectTrigger className="h-9"><SelectValue placeholder="Select year…" /></SelectTrigger>
                 <SelectContent>
                   {options.years.map(y => (
-                    <SelectItem key={y} value={y} className="text-xs">FY {y}</SelectItem>
+                    <SelectItem key={y} value={y}>FY {y}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -240,7 +228,11 @@ export default function BKPeriodReconciliation({ session, transactions }) {
               </div>
             </>
           )}
-          <Button onClick={handleRun} disabled={loading || (periodType !== 'custom' && !periodValue) || (periodType === 'custom' && (!customFrom || !customTo))} className="h-9 gap-2 flex-shrink-0">
+          <Button
+            onClick={handleRun}
+            disabled={loading || (periodType !== 'custom' && !periodValue) || (periodType === 'custom' && (!customFrom || !customTo))}
+            className="h-9 gap-2 flex-shrink-0"
+          >
             {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Running…</> : <><Scale className="w-4 h-4" /> Reconcile</>}
           </Button>
         </div>
@@ -271,7 +263,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
             </Button>
           </div>
 
-          {/* Reconciliation progress */}
+          {/* Reconciliation progress bar */}
           <div className="bg-muted/20 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-xs">
               <span className="font-semibold flex items-center gap-1"><Scale className="w-3.5 h-3.5" /> Reconciliation Completeness</span>
@@ -299,18 +291,7 @@ export default function BKPeriodReconciliation({ session, transactions }) {
             <SummaryCard label="Flagged / Duplicates" value={`${result.review_count} / ${result.duplicate_count}`} color={result.review_count + result.duplicate_count > 0 ? 'text-amber-600' : 'text-green-600'} icon={AlertTriangle} sub={`${result.reconciliation_pct}% reconciled`} />
           </div>
 
-          {/* Warnings */}
-          {result.warnings?.length > 0 && (
-            <div className="space-y-1.5">
-              {result.warnings.map((w, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {w}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Monthly chart (shown for quarterly/yearly views) */}
+          {/* Monthly chart */}
           {result.monthly_breakdown?.length > 1 && (
             <Card className="p-4">
               <p className="text-sm font-semibold mb-3 flex items-center gap-2"><BarChart2 className="w-4 h-4 text-primary" /> Month-by-Month Breakdown</p>
@@ -327,51 +308,60 @@ export default function BKPeriodReconciliation({ session, transactions }) {
             </Card>
           )}
 
-          {/* Account & Category Breakdowns side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Account breakdown */}
+          {/* Transactions table with inline category dropdown */}
+          {result.transactions?.length > 0 && (
             <Card className="p-4">
-              <p className="text-sm font-semibold mb-3">Account Breakdown</p>
-              <div className="space-y-1 max-h-72 overflow-y-auto">
-                {(result.account_breakdown || []).map((a, i) => {
-                  const total = a.debit_total + a.credit_total;
-                  const maxTotal = Math.max(...(result.account_breakdown || []).map(x => x.debit_total + x.credit_total), 1);
-                  return (
-                    <div key={i} className="space-y-0.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-medium truncate max-w-[160px]">{a.account_name}</span>
-                        <div className="flex gap-3 font-mono flex-shrink-0">
-                          {a.credit_total > 0 && <span className="text-green-600">+{fmt(a.credit_total)}</span>}
-                          {a.debit_total > 0 && <span className="text-red-600">-{fmt(a.debit_total)}</span>}
-                          <span className="text-muted-foreground text-[10px]">({a.count})</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-muted rounded-full h-1">
-                        <div className="h-1 rounded-full bg-primary/40" style={{ width: `${(total / maxTotal) * 100}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
+              <p className="text-sm font-semibold mb-3">Transactions ({result.transactions.length})</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/30">
+                    <tr>
+                      {['Date','Description / Vendor','Debit OUT','Credit IN','Category','Flags'].map(h => (
+                        <th key={h} className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.transactions.map((t, i) => {
+                      const currentCat = catEdits[i] !== undefined ? catEdits[i] : (t.category || '');
+                      return (
+                        <tr key={i} className={`border-t hover:bg-muted/10 ${t.is_duplicate ? 'opacity-50' : ''}`}>
+                          <td className="px-2 py-1.5 font-mono whitespace-nowrap">{t.transaction_date || '—'}</td>
+                          <td className="px-2 py-1.5 max-w-[220px]">
+                            <p className="truncate font-medium">{t.description || '—'}</p>
+                            {t.vendor_or_customer && <p className="truncate text-muted-foreground text-[10px]">{t.vendor_or_customer}</p>}
+                          </td>
+                          <td className="px-2 py-1.5 font-mono text-red-600 whitespace-nowrap">{t.debit_amount ? fmt(t.debit_amount) : '—'}</td>
+                          <td className="px-2 py-1.5 font-mono text-green-600 whitespace-nowrap">{t.credit_amount ? fmt(t.credit_amount) : '—'}</td>
+                          <td className="px-2 py-1.5 min-w-[160px]">
+                            <Select
+                              value={currentCat}
+                              onValueChange={val => setCatEdits(prev => ({ ...prev, [i]: val }))}
+                            >
+                              <SelectTrigger className="h-7 text-xs border-muted">
+                                <SelectValue placeholder="— select —" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CATEGORIES.map(c => (
+                                  <SelectItem key={c} value={c} className="text-xs capitalize">
+                                    {c.replace(/_/g, ' ')}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">
+                            {t.is_duplicate && <span className="text-red-500 text-[10px] font-semibold mr-1">DUP</span>}
+                            {t.needs_review && <span className="text-amber-500 text-[10px] font-semibold">⚠ Review</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </Card>
-
-            {/* Category breakdown */}
-            <Card className="p-4">
-              <p className="text-sm font-semibold mb-3">Category Breakdown</p>
-              <div className="space-y-1 max-h-72 overflow-y-auto">
-                {(result.category_breakdown || []).map((c, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
-                    <span className="capitalize text-muted-foreground truncate max-w-[160px]">{c.category.replace(/_/g,' ')}</span>
-                    <div className="flex gap-3 font-mono flex-shrink-0 text-right">
-                      {c.credit_total > 0 && <span className="text-green-600">{fmt(c.credit_total)}</span>}
-                      {c.debit_total > 0 && <span className="text-red-600">{fmt(c.debit_total)}</span>}
-                      <span className="text-muted-foreground text-[10px] w-6 text-right">{c.count}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
+          )}
 
           {/* File breakdown */}
           {result.file_breakdown?.length > 0 && (
@@ -394,21 +384,17 @@ export default function BKPeriodReconciliation({ session, transactions }) {
                           <td className="px-3 py-2 font-mono text-green-600">{fmt(f.credit_total)}</td>
                           <td className="px-3 py-2 font-mono text-red-600">{fmt(f.debit_total)}</td>
                           <td className={`px-3 py-2 font-mono font-bold ${fn >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fn >= 0 ? '+' : ''}{fmt(fn)}</td>
-                          <td className="px-3 py-2">
-                            {f.review_count > 0
-                              ? <span className="text-amber-600 font-semibold">⚠ {f.review_count}</span>
-                              : <span className="text-green-600">✓</span>}
-                          </td>
+                          <td className="px-3 py-2">{f.review_count > 0 ? <span className="text-amber-600 font-semibold">⚠ {f.review_count}</span> : <span className="text-green-600">✓</span>}</td>
                         </tr>
                       );
                     })}
                     <tr className="border-t bg-muted/20 font-bold">
-                      <td className="px-3 py-2 text-xs">TOTAL</td>
-                      <td className="px-3 py-2 font-mono text-xs">{result.transaction_count}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-green-600">{fmt(result.total_credits)}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-red-600">{fmt(result.total_debits)}</td>
-                      <td className={`px-3 py-2 font-mono text-xs font-bold ${net >= 0 ? 'text-green-600' : 'text-red-600'}`}>{net >= 0 ? '+' : ''}{fmt(net)}</td>
-                      <td className="px-3 py-2 text-xs text-amber-600">{result.review_count > 0 ? `⚠ ${result.review_count}` : '✓'}</td>
+                      <td className="px-3 py-2">TOTAL</td>
+                      <td className="px-3 py-2 font-mono">{result.transaction_count}</td>
+                      <td className="px-3 py-2 font-mono text-green-600">{fmt(result.total_credits)}</td>
+                      <td className="px-3 py-2 font-mono text-red-600">{fmt(result.total_debits)}</td>
+                      <td className={`px-3 py-2 font-mono font-bold ${net >= 0 ? 'text-green-600' : 'text-red-600'}`}>{net >= 0 ? '+' : ''}{fmt(net)}</td>
+                      <td className="px-3 py-2 text-amber-600">{result.review_count > 0 ? `⚠ ${result.review_count}` : '✓'}</td>
                     </tr>
                   </tbody>
                 </table>
