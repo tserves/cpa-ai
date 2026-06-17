@@ -26,6 +26,7 @@ import BKReconReport from '@/components/bookkeeper/BKReconReport';
 import BKDashboard from '@/components/bookkeeper/BKDashboard';
 import BKPeriodReconciliation from '@/components/bookkeeper/BKPeriodReconciliation';
 import BKCategorizationReport from '@/components/bookkeeper/BKCategorizationReport';
+import BKRulesManager from '@/components/bookkeeper/BKRulesManager';
 
 const STATUS_CONFIG = {
   uploading:    { label: 'Uploading',    color: 'bg-blue-100 text-blue-700',    icon: Upload },
@@ -436,8 +437,20 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
 
         {/* CATEGORIZATION */}
         {transactions.length > 0 && (
-          <TabsContent value="categorization" className="mt-4">
-            <BKCategorizationReport transactions={transactions} onUpdate={handleUpdate} />
+          <TabsContent value="categorization" className="mt-4 space-y-6">
+            <BKRulesManager
+              transactions={transactions}
+              onTransactionsUpdate={newTxs => setTransactions(newTxs)}
+            />
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold">All Transactions by Category</p>
+                <Button size="sm" variant="outline" onClick={handleSave} disabled={saving} className="h-8 text-xs gap-1">
+                  {saving ? <><RefreshCw className="w-3 h-3 animate-spin mr-1" /></> : null} Save Changes
+                </Button>
+              </div>
+              <BKCategorizationReport transactions={transactions} onUpdate={handleUpdate} />
+            </div>
           </TabsContent>
         )}
 

@@ -1,0 +1,49 @@
+{
+  "name": "CategorizationRule",
+  "type": "object",
+  "properties": {
+    "keyword": {
+      "type": "string",
+      "description": "Keyword or vendor name to match (case-insensitive substring match)"
+    },
+    "match_field": {
+      "type": "string",
+      "enum": [
+        "description",
+        "vendor_or_customer",
+        "any"
+      ],
+      "default": "any",
+      "description": "Which transaction field to match against"
+    },
+    "category": {
+      "type": "string",
+      "description": "Category to assign when keyword matches"
+    },
+    "account_name": {
+      "type": "string",
+      "description": "Account name label (defaults to category label)"
+    },
+    "priority": {
+      "type": "number",
+      "default": 0,
+      "description": "Higher priority rules are checked first"
+    },
+    "times_applied": {
+      "type": "number",
+      "default": 0,
+      "description": "How many times this rule has matched a transaction"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "User who created this rule"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "keyword",
+    "category"
+  ]
+}
