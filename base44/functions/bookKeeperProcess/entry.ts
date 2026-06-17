@@ -191,33 +191,17 @@ async function extractFile(base44, url, fileName, fileIndex, docType) {
   const fileType = isExcel ? 'Excel spreadsheet' : isCSV ? 'CSV file' : isPDF ? 'PDF document' : isImage ? 'scanned image' : 'financial document';
   const model = (isImage || isPDF) ? 'gemini_3_1_pro' : 'gemini_3_flash';
 
-  const prompt = `You are an expert bookkeeper. Extract ALL transactions from this ${fileType}: "${fileName}".
-
-Return JSON with:
+  const prompt = `Extract ALL transactions from this ${fileType}. Return JSON with:
 - document_type, institution_name, company_name, period_start, period_end (YYYY-MM-DD)
-- opening_balance, closing_balance, statement_total_credits, statement_total_debits, currency, confidence_score (0-100)
-- transactions: array of ALL rows with:
-  tx_id: "F${fileIndex}-TX-NNN" (sequential)
-  transaction_date: YYYY-MM-DD
-  description: exact text from document
-  vendor_or_customer: merchant/payee name
-  debit_amount: positive number (money OUT) or null
-  credit_amount: positive number (money IN) or null
-  category: one of: revenue|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
-  needs_review: true only if amount illegible
-  review_reason: why it needs review
-  confidence: 0.0-1.0
+- opening_balance, closing_balance, currency, confidence_score (0-100)
+- transactions: array with: tx_id ("F${fileIndex}-TX-NNN"), transaction_date (YYYY-MM-DD), description, vendor_or_customer, debit_amount (positive or null), credit_amount (positive or null), category (revenue|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized), confidence (0-1)
 
-Rules:
-- Extract EVERY transaction row
-- debit = money OUT, credit = money IN (both positive)
-- Most rows should have confidence >= 0.9
-- Only needs_review=true for genuinely illegible amounts`;
+Rules: Extract EVERY row. Debit=money OUT, credit=money IN (both positive). Use gemini_3_flash speed.`;
 
-  const timeoutMs = 90000;
+  const timeoutMs = 75000; // Leave buffer for platform 90s timeout
   const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), timeoutMs));
   const extractPromise = base44.asServiceRole.integrations.Core.InvokeLLM({
-    prompt, file_urls: [url], model, response_json_schema: EXTRACT_SCHEMA,
+    prompt, file_urls: [url], model: 'gemini_3_flash', response_json_schema: EXTRACT_SCHEMA, // Use faster model
   });
   const result = await Promise.race([extractPromise, timeoutPromise]);
 
@@ -429,7 +413,18 @@ Deno.serve(async (req) => {
       const session = await base44.asServiceRole.entities.BookKeeperSession.get(session_id);
       if (!session) return Response.json({ error: 'Session not found' }, { status: 404 });
 
-      let progress = JSON.parse(session.file_progress || '[]');
+      // Initialize progress if not exists
+      let progress = JSON.parse(session.file_progress || 'null');
+      if (!progress || progress.length === 0) {
+        progress = file_names.map((name, i) => ({ name, index: i, status: 'pending', tx_count: 0 }));
+        await base44.asServiceRole.entities.BookKeeperSession.update(session_id, { 
+          status: 'extracting', 
+          file_progress: JSON.stringify(progress),
+          transactions_raw: '[]',
+          file_metadata: '[]'
+        });
+      }
+      
       let allTxs = JSON.parse(session.transactions_raw || '[]');
       let fileResults = JSON.parse(session.file_metadata || '[]');
       let audit = JSON.parse(session.audit_trail || '[]');
