@@ -276,6 +276,31 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
     }
   };
 
+  const handleReExtract = async () => {
+    const fileUrls = parse('file_urls');
+    if (!fileUrls?.length) { toast({ title: 'No files stored — please create a new session', variant: 'destructive', duration: 5000 }); return; }
+    const fNames = parse('file_names') || fileUrls.map((_, i) => `File ${i+1}`);
+    toast({ title: '🤖 Re-extracting all files…', description: 'AI is re-reading your documents with the updated extraction engine', duration: 5000 });
+    // Step 1: classify
+    const classRes = await base44.functions.invoke('bookKeeperProcess', {
+      mode: 'classify', session_id: session.id, file_urls: fileUrls, file_names: fNames,
+    });
+    if (!classRes?.data?.success) { toast({ title: '❌ Classification failed', variant: 'destructive', duration: 5000 }); return; }
+    // Step 2: extract
+    base44.functions.invoke('bookKeeperProcess', {
+      mode: 'extract_all', session_id: session.id, file_urls: fileUrls, file_names: fNames,
+      file_classifications: classRes.data.classifications,
+    }).then(res => {
+      if (res?.data?.success) {
+        toast({ title: '✅ Re-extraction complete', description: `${res.data.transaction_count} transactions extracted`, duration: 5000 });
+        queryClient.invalidateQueries({ queryKey: ['bk-detail', session.id] });
+        onRefresh();
+      } else {
+        toast({ title: '❌ Extraction failed', description: res?.data?.error, variant: 'destructive', duration: 5000 });
+      }
+    });
+  };
+
   const handleExport = type => {
     if (type === 'transactions') {
       downloadCSV([['Date','Description','Vendor','Reference','Debit','Credit','Balance','Category','Account','Review','Duplicate','Source File','Confidence','Notes'],
@@ -309,6 +334,11 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {!isProc && (
+            <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={handleReExtract}>
+              <RefreshCw className="w-3.5 h-3.5" /> Re-Extract Files
+            </Button>
+          )}
           {!isProc && transactions.length > 0 && (
             <Button size="sm" className="h-8 text-xs gap-1" onClick={handleRegenerate} disabled={generating}>
               {generating ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…</> : <><BarChart2 className="w-3.5 h-3.5" /> Regenerate Reports</>}

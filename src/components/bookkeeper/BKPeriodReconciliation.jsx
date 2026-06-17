@@ -102,8 +102,10 @@ export default function BKPeriodReconciliation({ session, transactions }) {
     else setPeriodValue('');
   };
 
+  const hasNoDates = options.months.length === 0 && options.quarters.length === 0 && options.years.length === 0;
+
   const handleRun = async () => {
-    if (periodType !== 'custom' && !periodValue) return;
+    if (periodType !== 'custom' && !periodValue && !hasNoDates) return;
     if (periodType === 'custom' && (!customFrom || !customTo)) return;
     setLoading(true);
     setError(null);
@@ -230,10 +232,10 @@ export default function BKPeriodReconciliation({ session, transactions }) {
           )}
           <Button
             onClick={handleRun}
-            disabled={loading || (periodType !== 'custom' && !periodValue) || (periodType === 'custom' && (!customFrom || !customTo))}
             className="h-9 gap-2 flex-shrink-0"
+          disabled={loading || (periodType === 'custom' && (!customFrom || !customTo)) || (periodType !== 'custom' && !periodValue && !hasNoDates)}
           >
-            {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Running…</> : <><Scale className="w-4 h-4" /> Reconcile</>}
+            {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Running…</> : <><Scale className="w-4 h-4" /> {hasNoDates ? 'Run Full Reconciliation' : 'Reconcile'}</>}
           </Button>
         </div>
       </Card>

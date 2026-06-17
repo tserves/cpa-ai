@@ -125,7 +125,31 @@ const EXTRACT_SCHEMA = {
     statement_total_debits: { type: 'number' },
     currency: { type: 'string' },
     confidence_score: { type: 'number' },
-    transactions: { type: 'array', items: { type: 'object' } },
+    transactions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          tx_id: { type: 'string' },
+          transaction_date: { type: 'string', description: 'YYYY-MM-DD' },
+          posting_date: { type: 'string' },
+          description: { type: 'string' },
+          vendor_or_customer: { type: 'string' },
+          reference_number: { type: 'string' },
+          cheque_number: { type: 'string' },
+          debit_amount: { type: 'number', description: 'Money OUT / withdrawal / charge — positive number or null' },
+          credit_amount: { type: 'number', description: 'Money IN / deposit / payment received — positive number or null' },
+          running_balance: { type: 'number' },
+          tax_amount: { type: 'number' },
+          source_file: { type: 'string' },
+          source_page: { type: 'number' },
+          confidence: { type: 'number' },
+          needs_review: { type: 'boolean' },
+          review_reason: { type: 'string' },
+          category: { type: 'string' },
+        }
+      }
+    },
   }
 };
 
@@ -539,9 +563,9 @@ Deno.serve(async (req) => {
         }
       }
 
-      const txs = from || to
+      const txs = (from || to)
         ? allTxs.filter(t => {
-            if (!t.transaction_date) return false;
+            if (!t.transaction_date) return true; // include undated txs in all periods
             if (from && t.transaction_date < from) return false;
             if (to && t.transaction_date > to) return false;
             return true;
