@@ -1,0 +1,127 @@
+{
+  "name": "BookKeeperSession",
+  "type": "object",
+  "properties": {
+    "session_name": {
+      "type": "string"
+    },
+    "company_name": {
+      "type": "string"
+    },
+    "uploaded_by": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "uploading",
+        "classifying",
+        "extracting",
+        "reconciling",
+        "review",
+        "generating",
+        "completed",
+        "failed"
+      ],
+      "default": "uploading"
+    },
+    "file_names": {
+      "type": "string",
+      "description": "JSON array of file names"
+    },
+    "file_urls": {
+      "type": "string",
+      "description": "JSON array of file URLs"
+    },
+    "file_classifications": {
+      "type": "string",
+      "description": "JSON array of AI classification results per file"
+    },
+    "file_progress": {
+      "type": "string",
+      "description": "JSON array of per-file extraction progress"
+    },
+    "currency": {
+      "type": "string",
+      "default": "CAD"
+    },
+    "date_from": {
+      "type": "string"
+    },
+    "date_to": {
+      "type": "string"
+    },
+    "transactions_raw": {
+      "type": "string",
+      "description": "JSON array of all extracted transactions"
+    },
+    "transactions_reviewed": {
+      "type": "string",
+      "description": "JSON array of approved transactions"
+    },
+    "reconciliation_results": {
+      "type": "string",
+      "description": "JSON reconciliation summary"
+    },
+    "bank_reconciliation": {
+      "type": "string",
+      "description": "JSON array of per-file bank recon"
+    },
+    "gl_report": {
+      "type": "string"
+    },
+    "pl_report": {
+      "type": "string"
+    },
+    "trial_balance": {
+      "type": "string"
+    },
+    "transaction_summary": {
+      "type": "string"
+    },
+    "review_items_report": {
+      "type": "string"
+    },
+    "reports_generated": {
+      "type": "string",
+      "description": "JSON array of generated report types"
+    },
+    "total_debits": {
+      "type": "number"
+    },
+    "total_credits": {
+      "type": "number"
+    },
+    "transaction_count": {
+      "type": "number"
+    },
+    "matched_count": {
+      "type": "number"
+    },
+    "unmatched_count": {
+      "type": "number"
+    },
+    "duplicate_count": {
+      "type": "number"
+    },
+    "review_count": {
+      "type": "number"
+    },
+    "uncategorized_count": {
+      "type": "number"
+    },
+    "confidence_score": {
+      "type": "number"
+    },
+    "audit_trail": {
+      "type": "string",
+      "description": "JSON array of audit log entries"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_name"
+  ]
+}
