@@ -181,20 +181,81 @@ function reconcileFile(fileResult, allTxs) {
   const fileTxs = allTxs.filter(t => t.source_file === fileResult.file_name);
   const calcCredits = fileTxs.reduce((s, t) => s + (t.credit_amount || 0), 0);
   const calcDebits = fileTxs.reduce((s, t) => s + (t.debit_amount || 0), 0);
+  const netActivity = calcCredits - calcDebits;
   const warnings = [];
-  let status = 'not_reconciled', difference = null, calculatedClosing = null;
+  const duplicates = fileTxs.filter(t => t.is_duplicate).length;
+  const reviewItems = fileTxs.filter(t => t.needs_review && !t.is_duplicate).length;
+  const unmatchedDebits = fileTxs.filter(t => t.debit_amount && !t.credit_amount).length;
+  const unmatchedCredits = fileTxs.filter(t => t.credit_amount && !t.debit_amount).length;
+
+  let status, difference = null, calculatedClosing = null;
+
   if (fileResult.opening_balance != null && fileResult.closing_balance != null) {
+    // Full balance reconciliation
     calculatedClosing = fileResult.opening_balance + calcCredits - calcDebits;
     difference = Math.abs(calculatedClosing - fileResult.closing_balance);
-    status = difference < 0.02 ? 'reconciled' : 'not_reconciled';
-    if (difference >= 0.02) warnings.push(`Balance mismatch: $${difference.toFixed(2)}`);
+    if (difference < 0.02) {
+      status = 'reconciled';
+    } else if (difference < 50) {
+      status = 'partially_reconciled';
+      warnings.push(`Small balance mismatch of $${difference.toFixed(2)} — may be rounding or missing transaction`);
+    } else {
+      status = 'not_reconciled';
+      warnings.push(`Balance mismatch: calculated closing $${calculatedClosing.toFixed(2)} vs stated $${fileResult.closing_balance.toFixed(2)} (diff $${difference.toFixed(2)})`);
+    }
+  } else if (fileResult.closing_balance != null && fileResult.opening_balance == null) {
+    // Only closing balance — compute net
+    status = fileTxs.length > 0 ? 'partially_reconciled' : 'not_reconciled';
+    warnings.push('Opening balance not detected — net activity reconciliation only');
+  } else if (fileTxs.length > 0) {
+    // No balances — reconcile on transaction totals only
+    status = duplicates > 0 ? 'partially_reconciled' : 'reconciled';
+    warnings.push('No statement balances detected — reconciled by transaction totals');
   } else {
-    status = 'missing_balances';
-    warnings.push('Opening or closing balance not detected');
+    status = 'not_reconciled';
+    warnings.push('No transactions extracted from this file');
   }
-  const duplicates = fileTxs.filter(t => t.is_duplicate).length;
-  if (duplicates > 0) warnings.push(`${duplicates} possible duplicate(s) detected`);
-  return { file_name: fileResult.file_name, document_type: fileResult.document_type, institution_name: fileResult.institution_name, period_start: fileResult.period_start, period_end: fileResult.period_end, opening_balance: fileResult.opening_balance, closing_balance: fileResult.closing_balance, calculated_closing: calculatedClosing, total_credits: calcCredits, total_debits: calcDebits, difference, status, transaction_count: fileTxs.length, confidence_score: fileResult.confidence_score, warnings, duplicate_count: duplicates };
+
+  if (duplicates > 0) warnings.push(`${duplicates} possible duplicate transaction(s) detected`);
+  if (reviewItems > 0) warnings.push(`${reviewItems} transaction(s) flagged for review`);
+
+  // Statement vs extracted comparison
+  const stmtCredits = fileResult.statement_total_credits;
+  const stmtDebits = fileResult.statement_total_debits;
+  if (stmtCredits != null && Math.abs(stmtCredits - calcCredits) > 0.02) {
+    warnings.push(`Credit total mismatch: statement $${stmtCredits.toFixed(2)} vs extracted $${calcCredits.toFixed(2)}`);
+    if (status === 'reconciled') status = 'partially_reconciled';
+  }
+  if (stmtDebits != null && Math.abs(stmtDebits - calcDebits) > 0.02) {
+    warnings.push(`Debit total mismatch: statement $${stmtDebits.toFixed(2)} vs extracted $${calcDebits.toFixed(2)}`);
+    if (status === 'reconciled') status = 'partially_reconciled';
+  }
+
+  return {
+    file_name: fileResult.file_name,
+    document_type: fileResult.document_type,
+    institution_name: fileResult.institution_name,
+    account_number_masked: fileResult.account_number_masked,
+    period_start: fileResult.period_start,
+    period_end: fileResult.period_end,
+    opening_balance: fileResult.opening_balance,
+    closing_balance: fileResult.closing_balance,
+    calculated_closing: calculatedClosing,
+    statement_total_credits: stmtCredits,
+    statement_total_debits: stmtDebits,
+    total_credits: calcCredits,
+    total_debits: calcDebits,
+    net_activity: netActivity,
+    difference,
+    status,
+    transaction_count: fileTxs.length,
+    unmatched_debits: unmatchedDebits,
+    unmatched_credits: unmatchedCredits,
+    confidence_score: fileResult.confidence_score || 0,
+    warnings,
+    duplicate_count: duplicates,
+    review_count: reviewItems,
+  };
 }
 
 function buildGL(txs) {
