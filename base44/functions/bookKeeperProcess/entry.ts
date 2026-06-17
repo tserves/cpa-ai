@@ -39,22 +39,46 @@ const REVIEW_FLAGS = [
 
 function categorize(tx) {
   const text = ((tx.description || '') + ' ' + (tx.raw_text || '') + ' ' + (tx.vendor_or_customer || '')).toLowerCase();
-  let out = { ...tx };
-  for (const flag of REVIEW_FLAGS) {
-    if (flag.pattern.test(text) && !out.needs_review) {
-      out = { ...out, needs_review: true, review_reason: flag.reason };
+  let out = { ...tx, needs_review: false, review_reason: null };
+
+  // Step 1: Try to categorize first using our rules
+  let categorized = false;
+  if (!out.category || out.category === 'unclassified' || out.category === 'uncategorized') {
+    for (const rule of CATEGORY_RULES) {
+      if (rule.keywords.some(k => text.includes(k))) {
+        out = { ...out, category: rule.category, account_name: out.account_name || rule.account, pl_include: rule.pl_include, auto_mapped: true };
+        categorized = true;
+        break;
+      }
+    }
+  } else {
+    categorized = true; // AI already assigned a valid category
+  }
+
+  // Step 2: Only flag for review if truly ambiguous — not just because it's a transfer/payment category
+  const SAFE_CATS = ['transfer','cc_payment','loan_payment','cash_withdrawal','taxes','owner_drawings','bank_charges'];
+  const isSafeCat = SAFE_CATS.includes(out.category);
+
+  if (!isSafeCat) {
+    for (const flag of REVIEW_FLAGS) {
+      if (flag.pattern.test(text)) {
+        out = { ...out, needs_review: true, review_reason: flag.reason };
+        break;
+      }
     }
   }
-  if ((out.debit_amount || 0) > 5000 && !out.needs_review) {
+
+  // Large debits (>$10k) always warrant a look, unless already in a safe category
+  if ((out.debit_amount || 0) > 10000 && !isSafeCat && !out.needs_review) {
     out = { ...out, needs_review: true, review_reason: 'Large debit — verify business purpose' };
   }
-  if (out.category && out.category !== 'unclassified' && out.category !== 'uncategorized') return out;
-  for (const rule of CATEGORY_RULES) {
-    if (rule.keywords.some(k => text.includes(k))) {
-      return { ...out, category: rule.category, account_name: out.account_name || rule.account, pl_include: rule.pl_include, auto_mapped: true };
-    }
+
+  // Only flag uncategorized if we couldn't map it
+  if (!categorized) {
+    return { ...out, category: 'uncategorized', account_name: 'Uncategorized', pl_include: false, needs_review: true, review_reason: out.review_reason || 'Could not auto-categorize' };
   }
-  return { ...out, category: 'uncategorized', account_name: 'Uncategorized', pl_include: false, needs_review: true, review_reason: out.review_reason || 'Could not auto-categorize — please classify manually' };
+
+  return out;
 }
 
 function detectDuplicates(txs) {
@@ -169,19 +193,20 @@ Return JSON with:
   tax_amount: GST/HST/tax portion if visible or null
   source_file: "${fileName}"
   source_page: page number where this row appeared or null
-  confidence: 0.0-1.0 (OCR confidence for this row)
-  needs_review: true if confidence<0.75, direction unclear, or OCR was uncertain
-  review_reason: specific reason if needs_review is true, else null
-  category: one of: revenue|other_income|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|owner_drawings|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
+  confidence: 0.0-1.0 (your extraction confidence for this row — most clear transactions should be 0.9+)
+  needs_review: ONLY set true if the amount is illegible, direction (debit vs credit) is genuinely unclear, or the row is partially cut off. DO NOT flag for review just because the category is unknown.
+  review_reason: specific reason only if needs_review is true, else null
+  category: best-guess from: revenue|other_income|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|owner_drawings|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
 
 EXTRACTION RULES:
 - Extract EVERY transaction row without exception
 - Skip only pure header, footer, or page-break rows
 - Deposits / credits / payments IN = credit_amount
 - Withdrawals / charges / payments OUT = debit_amount
-- If direction is ambiguous, set needs_review=true
-- NEVER fabricate, guess, or fill in amounts you cannot read
-- Preserve exact description text as it appears on the document`;
+- Most transactions have a clear direction — only set needs_review=true for genuinely ambiguous amounts or illegible OCR
+- NEVER fabricate amounts you cannot read; set needs_review=true only in that case
+- Preserve exact description text as it appears on the document
+- Set confidence >= 0.9 for clearly readable rows, 0.7-0.9 for slightly unclear, below 0.7 only for seriously degraded text`;
 
   const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), 120000));
   const extractPromise = base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -410,7 +435,8 @@ Deno.serve(async (req) => {
       const reviewCount = allTxs.filter(t => t.needs_review).length;
       const duplicateCount = allTxs.filter(t => t.is_duplicate).length;
       const uncatCount = allTxs.filter(t => !t.category || t.category === 'uncategorized').length;
-      const matchedCount = allTxs.filter(t => !t.needs_review && !t.is_duplicate).length;
+      // Matched = categorized + not a duplicate (review flags are advisory, not blocking)
+      const matchedCount = allTxs.filter(t => t.category && t.category !== 'uncategorized' && !t.is_duplicate).length;
       const avgConf = completedCount > 0 ? Math.round(fileResults.filter(r => !r.error).reduce((s, r) => s + (r.confidence_score || 0), 0) / completedCount) : 0;
       const companyName = fileResults.find(r => r.company_name)?.company_name || null;
       const currency = fileResults.find(r => r.currency)?.currency || 'CAD';
@@ -422,8 +448,9 @@ Deno.serve(async (req) => {
         reconciled_files: bankRecon.filter(r => r.status === 'reconciled').length,
         unreconciled_files: bankRecon.filter(r => r.status !== 'reconciled').length,
         total_matched: matchedCount,
-        total_unmatched: reviewCount,
+        total_unmatched: uncatCount,
         total_duplicates: duplicateCount,
+        total_review_flagged: reviewCount,
         completion_pct: allTxs.length > 0 ? Math.round((matchedCount / allTxs.length) * 100) : 0,
       };
 
@@ -527,7 +554,7 @@ Deno.serve(async (req) => {
       const reviewCount = txs.filter(t => t.needs_review).length;
       const duplicateCount = txs.filter(t => t.is_duplicate).length;
       const uncatCount = txs.filter(t => !t.category || t.category === 'uncategorized').length;
-      const matchedCount = txs.filter(t => !t.needs_review && !t.is_duplicate).length;
+      const matchedCount = txs.filter(t => t.category && t.category !== 'uncategorized' && !t.is_duplicate).length;
 
       // Per-account breakdown
       const accountBreakdown = {};

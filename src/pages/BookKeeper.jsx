@@ -366,29 +366,50 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
 
         {/* OVERVIEW */}
         <TabsContent value="overview" className="mt-4 space-y-4">
-          {reconSummary && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Reconciled Files</p><p className="text-base font-bold text-green-600">{reconSummary.reconciled_files}/{reconSummary.total_files}</p></Card>
-              <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Matched Txns</p><p className="text-base font-bold text-green-600">{reconSummary.total_matched}</p></Card>
-              <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Flagged for Review</p><p className="text-base font-bold text-amber-600">{reconSummary.total_unmatched}</p></Card>
-              <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Reconciliation</p><p className={`text-base font-bold ${reconSummary.completion_pct >= 80 ? 'text-green-600' : 'text-amber-600'}`}>{reconSummary.completion_pct}%</p></Card>
-            </div>
-          )}
+          {transactions.length > 0 && !isProc && (() => {
+            const catCount = transactions.filter(t => t.category && t.category !== 'uncategorized').length;
+            const catPct = transactions.length > 0 ? Math.round((catCount / transactions.length) * 100) : 0;
+            const totalCredits = transactions.reduce((s, t) => s + (t.credit_amount || 0), 0);
+            const totalDebits = transactions.reduce((s, t) => s + (t.debit_amount || 0), 0);
+            return (
+              <div className="space-y-4">
+                {/* Live reconciliation stats */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Card className="p-3 text-center">
+                    <p className="text-[10px] text-muted-foreground">Categorized</p>
+                    <p className="text-base font-bold text-green-600">{catCount} / {transactions.length}</p>
+                    <div className="w-full bg-muted rounded-full h-1.5 mt-1.5"><div className="h-1.5 rounded-full bg-green-500 transition-all" style={{ width: `${catPct}%` }} /></div>
+                  </Card>
+                  <Card className="p-3 text-center">
+                    <p className="text-[10px] text-muted-foreground">Uncategorized</p>
+                    <p className={`text-base font-bold ${uncatCount > 0 ? 'text-amber-600' : 'text-green-600'}`}>{uncatCount}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{uncatCount > 0 ? 'need classification' : 'all categorized ✓'}</p>
+                  </Card>
+                  <Card className="p-3 text-center">
+                    <p className="text-[10px] text-muted-foreground">Total Credits IN</p>
+                    <p className="text-base font-bold font-mono text-green-600">${totalCredits.toLocaleString('en-CA', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                  </Card>
+                  <Card className="p-3 text-center">
+                    <p className="text-[10px] text-muted-foreground">Total Debits OUT</p>
+                    <p className="text-base font-bold font-mono text-red-600">${totalDebits.toLocaleString('en-CA', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                  </Card>
+                </div>
+                {reconSummary && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Reconciled Files</p><p className="text-base font-bold text-green-600">{reconSummary.reconciled_files}/{reconSummary.total_files}</p></Card>
+                    <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Categorization</p><p className={`text-base font-bold ${reconSummary.completion_pct >= 80 ? 'text-green-600' : 'text-amber-600'}`}>{reconSummary.completion_pct}%</p></Card>
+                    <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Need Review</p><p className={`text-base font-bold ${reviewCount > 0 ? 'text-amber-600' : 'text-green-600'}`}>{reviewCount}</p></Card>
+                    <Card className="p-3 text-center"><p className="text-[10px] text-muted-foreground">Duplicates</p><p className={`text-base font-bold ${dupeCount > 0 ? 'text-red-600' : 'text-green-600'}`}>{dupeCount}</p></Card>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {!transactions.length && !isProc && (
             <div className="text-center py-12 text-muted-foreground">
               <Database className="w-12 h-12 mx-auto mb-2 opacity-20" />
               <p className="text-sm">{session.status === 'failed' ? 'Extraction failed — try creating a new session.' : 'No transactions extracted yet.'}</p>
             </div>
-          )}
-          {transactions.length > 0 && !isProc && (
-            <Card className="p-4">
-              <p className="text-sm font-semibold mb-2">Categorization Summary</p>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="text-center"><p className="text-lg font-bold text-green-600">{transactions.filter(t => !t.needs_review && t.category !== 'uncategorized').length}</p><p className="text-[10px] text-muted-foreground">Auto-categorized</p></div>
-                <div className="text-center"><p className="text-lg font-bold text-amber-600">{reviewCount}</p><p className="text-[10px] text-muted-foreground">Needs Review</p></div>
-                <div className="text-center"><p className="text-lg font-bold text-red-600">{uncatCount}</p><p className="text-[10px] text-muted-foreground">Uncategorized</p></div>
-              </div>
-            </Card>
           )}
         </TabsContent>
 
@@ -403,7 +424,7 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
         {/* ALL TRANSACTIONS */}
         <TabsContent value="transactions" className="mt-4 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">{transactions.length} transactions · {transactions.filter(t => !t.needs_review).length} categorized · {reviewCount} flagged · {dupeCount} duplicates</p>
+            <p className="text-xs text-muted-foreground">{transactions.length} transactions · {transactions.filter(t => t.category && t.category !== 'uncategorized').length} categorized · {uncatCount} uncategorized · {reviewCount} flagged · {dupeCount} duplicates</p>
             <Button size="sm" variant="outline" onClick={handleSave} disabled={saving} className="h-8 text-xs">
               {saving ? <><RefreshCw className="w-3 h-3 animate-spin mr-1" /></> : null} Save Changes
             </Button>
