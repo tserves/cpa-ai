@@ -136,10 +136,19 @@ Return JSON:
 
 async function extractFile(base44, url, fileName, fileIndex, docType) {
   const ext = (fileName || '').split('.').pop().toLowerCase();
-  const fileType = ['xlsx','xls'].includes(ext) ? 'excel' : ext === 'csv' ? 'csv' : ext === 'pdf' ? 'pdf' : ['png','jpg','jpeg','tiff','webp'].includes(ext) ? 'image' : 'document';
+  const isImage = ['png','jpg','jpeg','tiff','webp'].includes(ext);
+  const isPDF = ext === 'pdf';
+  const isExcel = ['xlsx','xls'].includes(ext);
+  const isCSV = ext === 'csv';
+  const fileType = isExcel ? 'Excel spreadsheet' : isCSV ? 'CSV file' : isPDF ? 'PDF document' : isImage ? 'scanned image/document' : 'financial document';
 
-  const prompt = `You are an expert CPA and bookkeeper. Extract ALL financial transactions from this ${fileType} file: "${fileName}".
+  // Use gemini_3_1_pro for full OCR on scanned PDFs and images; gemini_3_flash for structured files
+  const model = (isImage || isPDF) ? 'gemini_3_1_pro' : 'gemini_3_flash';
+
+  const prompt = `You are an expert CPA and bookkeeper with OCR capability. Extract ALL financial transactions from this ${fileType}: "${fileName}".
 Document type: ${docType || 'financial document'}
+
+${isImage || isPDF ? `IMPORTANT: This may be a scanned document. Use full OCR to read every character. Do not skip any row, even if text appears faint, rotated, or partially legible. Flag low-legibility items with needs_review=true.` : ''}
 
 Return JSON with:
 - document_type, institution_name, account_number_masked (last 4 only), company_name, accounting_basis (cash|accrual|unknown)
@@ -147,34 +156,41 @@ Return JSON with:
 - opening_balance, closing_balance, statement_total_credits, statement_total_debits (numbers or null)
 - currency: ISO code (default CAD), confidence_score: 0-100
 - transactions: array of ALL rows, each with:
-  tx_id: "F${fileIndex}-TX-NNN"
+  tx_id: "F${fileIndex}-TX-NNN" (sequential NNN padded to 3 digits)
   transaction_date: YYYY-MM-DD
   posting_date: YYYY-MM-DD or null
-  description: string
-  vendor_or_customer: string
-  reference_number: string or null
-  cheque_number: string or null
-  debit_amount: positive number (money OUT) or null
-  credit_amount: positive number (money IN) or null
-  running_balance: number or null
-  tax_amount: number or null
+  description: full description as written on statement
+  vendor_or_customer: extracted merchant/payee/payer name or null
+  reference_number: cheque number, reference, or authorization number or null
+  cheque_number: cheque number if present, else null
+  debit_amount: positive number (money OUT / withdrawal / charge) or null
+  credit_amount: positive number (money IN / deposit / payment) or null
+  running_balance: running balance after this transaction or null
+  tax_amount: GST/HST/tax portion if visible or null
   source_file: "${fileName}"
-  source_page: page number or null
-  confidence: 0.0-1.0
-  needs_review: true if confidence<0.75 or direction unclear
-  review_reason: string or null
-  category: revenue|other_income|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|owner_drawings|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
+  source_page: page number where this row appeared or null
+  confidence: 0.0-1.0 (OCR confidence for this row)
+  needs_review: true if confidence<0.75, direction unclear, or OCR was uncertain
+  review_reason: specific reason if needs_review is true, else null
+  category: one of: revenue|other_income|cogs|bank_charges|rent|payroll|insurance|utilities|software|advertising|telecom|vehicle|travel|meals|professional_fees|office_expenses|repairs|interest_expense|taxes|owner_drawings|transfer|cc_payment|loan_payment|cash_withdrawal|uncategorized
 
-RULES: Extract EVERY row. Skip header/footer/summary-only rows. Deposits=credit_amount. Withdrawals=debit_amount. NEVER fabricate data. Flag uncertain items.`;
+EXTRACTION RULES:
+- Extract EVERY transaction row without exception
+- Skip only pure header, footer, or page-break rows
+- Deposits / credits / payments IN = credit_amount
+- Withdrawals / charges / payments OUT = debit_amount
+- If direction is ambiguous, set needs_review=true
+- NEVER fabricate, guess, or fill in amounts you cannot read
+- Preserve exact description text as it appears on the document`;
 
-  const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), 90000));
+  const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${fileName}`)), 120000));
   const extractPromise = base44.asServiceRole.integrations.Core.InvokeLLM({
-    prompt, file_urls: [url], model: 'gemini_3_flash', response_json_schema: EXTRACT_SCHEMA,
+    prompt, file_urls: [url], model, response_json_schema: EXTRACT_SCHEMA,
   });
   const result = await Promise.race([extractPromise, timeoutPromise]);
 
   const txs = detectDuplicates((result.transactions || []).map(tx => categorize(tx)));
-  return { ...result, transactions: txs, file_name: fileName };
+  return { ...result, transactions: txs, file_name: fileName, ocr_model: model };
 }
 
 function reconcileFile(fileResult, allTxs) {
@@ -462,6 +478,131 @@ Deno.serve(async (req) => {
       if (report_types.includes('review_items')) updates.review_items_report = JSON.stringify(buildReviewItems(txs));
       await base44.asServiceRole.entities.BookKeeperSession.update(session_id, updates);
       return Response.json({ success: true, generated: report_types });
+    }
+
+    // ── RECONCILE_PERIOD: reconcile transactions for a specific period ──
+    if (mode === 'reconcile_period') {
+      const { session_id, period_type, period_value, date_from, date_to } = body;
+      const records = await base44.asServiceRole.entities.BookKeeperSession.filter({ id: session_id });
+      if (!records?.length) return Response.json({ error: 'Session not found' }, { status: 404 });
+      const rec = records[0];
+
+      let allTxs = JSON.parse(rec.transactions_reviewed || rec.transactions_raw || '[]');
+      const fileMetadata = JSON.parse(rec.file_metadata || '[]');
+
+      // Filter by date range
+      let from = date_from, to = date_to;
+      if (!from && !to && period_value) {
+        if (period_type === 'monthly') {
+          from = `${period_value}-01`;
+          const [y, m] = period_value.split('-').map(Number);
+          const last = new Date(y, m, 0).getDate();
+          to = `${period_value}-${String(last).padStart(2, '0')}`;
+        } else if (period_type === 'quarterly') {
+          const [y, q] = period_value.split('-Q');
+          const qNum = parseInt(q);
+          const startMonth = (qNum - 1) * 3 + 1;
+          const endMonth = qNum * 3;
+          from = `${y}-${String(startMonth).padStart(2, '0')}-01`;
+          const last = new Date(parseInt(y), endMonth, 0).getDate();
+          to = `${y}-${String(endMonth).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+        } else if (period_type === 'yearly') {
+          from = `${period_value}-01-01`;
+          to = `${period_value}-12-31`;
+        }
+      }
+
+      const txs = from || to
+        ? allTxs.filter(t => {
+            if (!t.transaction_date) return false;
+            if (from && t.transaction_date < from) return false;
+            if (to && t.transaction_date > to) return false;
+            return true;
+          })
+        : allTxs;
+
+      const totalCredits = txs.reduce((s, t) => s + (t.credit_amount || 0), 0);
+      const totalDebits = txs.reduce((s, t) => s + (t.debit_amount || 0), 0);
+      const netActivity = totalCredits - totalDebits;
+      const reviewCount = txs.filter(t => t.needs_review).length;
+      const duplicateCount = txs.filter(t => t.is_duplicate).length;
+      const uncatCount = txs.filter(t => !t.category || t.category === 'uncategorized').length;
+      const matchedCount = txs.filter(t => !t.needs_review && !t.is_duplicate).length;
+
+      // Per-account breakdown
+      const accountBreakdown = {};
+      txs.forEach(tx => {
+        const key = tx.account_name || 'Uncategorized';
+        if (!accountBreakdown[key]) accountBreakdown[key] = { account_name: key, category: tx.category || 'uncategorized', debit_total: 0, credit_total: 0, count: 0 };
+        accountBreakdown[key].debit_total += (tx.debit_amount || 0);
+        accountBreakdown[key].credit_total += (tx.credit_amount || 0);
+        accountBreakdown[key].count++;
+      });
+
+      // Per-file breakdown for the period
+      const fileBreakdown = {};
+      txs.forEach(tx => {
+        const key = tx.source_file || 'Unknown';
+        if (!fileBreakdown[key]) fileBreakdown[key] = { file_name: key, debit_total: 0, credit_total: 0, count: 0, review_count: 0 };
+        fileBreakdown[key].debit_total += (tx.debit_amount || 0);
+        fileBreakdown[key].credit_total += (tx.credit_amount || 0);
+        fileBreakdown[key].count++;
+        if (tx.needs_review) fileBreakdown[key].review_count++;
+      });
+
+      // Per-month breakdown within period
+      const monthlyBreakdown = {};
+      txs.forEach(tx => {
+        if (!tx.transaction_date) return;
+        const mo = tx.transaction_date.substring(0, 7);
+        if (!monthlyBreakdown[mo]) monthlyBreakdown[mo] = { month: mo, debit_total: 0, credit_total: 0, count: 0, net: 0 };
+        monthlyBreakdown[mo].debit_total += (tx.debit_amount || 0);
+        monthlyBreakdown[mo].credit_total += (tx.credit_amount || 0);
+        monthlyBreakdown[mo].count++;
+      });
+      Object.values(monthlyBreakdown).forEach(m => { m.net = m.credit_total - m.debit_total; });
+
+      // Category breakdown
+      const categoryBreakdown = {};
+      txs.forEach(tx => {
+        const cat = tx.category || 'uncategorized';
+        if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { category: cat, account_name: tx.account_name || cat, debit_total: 0, credit_total: 0, count: 0 };
+        categoryBreakdown[cat].debit_total += (tx.debit_amount || 0);
+        categoryBreakdown[cat].credit_total += (tx.credit_amount || 0);
+        categoryBreakdown[cat].count++;
+      });
+
+      // Warnings
+      const warnings = [];
+      if (duplicateCount > 0) warnings.push(`${duplicateCount} possible duplicate transaction(s) in this period`);
+      if (uncatCount > 0) warnings.push(`${uncatCount} uncategorized transaction(s) need classification`);
+      if (reviewCount > 0) warnings.push(`${reviewCount} transaction(s) flagged for review`);
+
+      const reconPct = txs.length > 0 ? Math.round((matchedCount / txs.length) * 100) : 0;
+
+      return Response.json({
+        success: true,
+        period_type,
+        period_value,
+        date_from: from,
+        date_to: to,
+        transaction_count: txs.length,
+        total_credits: totalCredits,
+        total_debits: totalDebits,
+        net_activity: netActivity,
+        matched_count: matchedCount,
+        review_count: reviewCount,
+        duplicate_count: duplicateCount,
+        uncategorized_count: uncatCount,
+        reconciliation_pct: reconPct,
+        status: duplicateCount > 0 || reconPct < 80 ? 'needs_attention' : 'reconciled',
+        warnings,
+        account_breakdown: Object.values(accountBreakdown).sort((a, b) => (b.debit_total + b.credit_total) - (a.debit_total + a.credit_total)),
+        file_breakdown: Object.values(fileBreakdown),
+        monthly_breakdown: Object.values(monthlyBreakdown).sort((a, b) => a.month > b.month ? 1 : -1),
+        category_breakdown: Object.values(categoryBreakdown).sort((a, b) => (b.debit_total + b.credit_total) - (a.debit_total + a.credit_total)),
+        transactions: txs,
+      });
     }
 
     return Response.json({ error: 'Unknown mode' }, { status: 400 });

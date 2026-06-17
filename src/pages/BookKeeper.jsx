@@ -24,6 +24,7 @@ import BKGLReport from '@/components/bookkeeper/BKGLReport';
 import BKPLReport from '@/components/bookkeeper/BKPLReport';
 import BKReconReport from '@/components/bookkeeper/BKReconReport';
 import BKDashboard from '@/components/bookkeeper/BKDashboard';
+import BKPeriodReconciliation from '@/components/bookkeeper/BKPeriodReconciliation';
 
 const STATUS_CONFIG = {
   uploading:    { label: 'Uploading',    color: 'bg-blue-100 text-blue-700',    icon: Upload },
@@ -353,6 +354,7 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
           <TabsTrigger value="transactions" className="text-xs">All Transactions{transactions.length > 0 ? ` (${transactions.length})` : ''}</TabsTrigger>
           {reviewCount > 0 && <TabsTrigger value="review" className="text-xs gap-1">Review Items <span className="ml-1 bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full">{reviewCount}</span></TabsTrigger>}
           {bankRecon.length > 0 && <TabsTrigger value="recon" className="text-xs">Bank Reconciliation</TabsTrigger>}
+          {transactions.length > 0 && <TabsTrigger value="period-recon" className="text-xs">Period Reconciliation</TabsTrigger>}
           {glReport && <TabsTrigger value="gl" className="text-xs">General Ledger</TabsTrigger>}
           {plReport && <TabsTrigger value="pl" className="text-xs">Profit & Loss</TabsTrigger>}
           {trialBalance && <TabsTrigger value="tb" className="text-xs">Trial Balance</TabsTrigger>}
@@ -427,6 +429,13 @@ function SessionDetail({ session: init, onBack, onRefresh }) {
               <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleExport('recon')}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
             </div>
             <BKReconReport reconciliations={bankRecon} />
+          </TabsContent>
+        )}
+
+        {/* PERIOD RECONCILIATION */}
+        {transactions.length > 0 && (
+          <TabsContent value="period-recon" className="mt-4">
+            <BKPeriodReconciliation session={session} transactions={transactions} />
           </TabsContent>
         )}
 
