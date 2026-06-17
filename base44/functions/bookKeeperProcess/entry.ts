@@ -478,7 +478,8 @@ Deno.serve(async (req) => {
         completion_pct: allTxs.length > 0 ? Math.round((matchedCount / allTxs.length) * 100) : 0,
       };
 
-      const audit = JSON.parse((await base44.asServiceRole.entities.BookKeeperSession.filter({ id: session_id }))[0]?.audit_trail || '[]');
+      const auditRecs = await base44.asServiceRole.entities.BookKeeperSession.list();
+      const audit = JSON.parse(auditRecs.find(r => r.id === session_id)?.audit_trail || '[]');
       audit.push({ action: 'extraction_completed', timestamp: new Date().toISOString(), transaction_count: allTxs.length, files_succeeded: completedCount, files_failed: results.length - completedCount });
 
       await base44.asServiceRole.entities.BookKeeperSession.update(session_id, {
@@ -515,9 +516,9 @@ Deno.serve(async (req) => {
     // ── REGENERATE: rebuild reports from reviewed transactions ──
     if (mode === 'regenerate') {
       const { session_id, report_types, date_from, date_to } = body;
-      const records = await base44.asServiceRole.entities.BookKeeperSession.filter({ id: session_id });
-      if (!records?.length) return Response.json({ error: 'Session not found' }, { status: 404 });
-      const rec = records[0];
+      const allRecs = await base44.asServiceRole.entities.BookKeeperSession.list();
+      const rec = allRecs.find(r => r.id === session_id);
+      if (!rec) return Response.json({ error: 'Session not found' }, { status: 404 });
       let txs = JSON.parse(rec.transactions_reviewed || rec.transactions_raw || '[]');
       if (date_from) txs = txs.filter(t => !t.transaction_date || t.transaction_date >= date_from);
       if (date_to) txs = txs.filter(t => !t.transaction_date || t.transaction_date <= date_to);
@@ -534,9 +535,9 @@ Deno.serve(async (req) => {
     // ── RECONCILE_PERIOD: reconcile transactions for a specific period ──
     if (mode === 'reconcile_period') {
       const { session_id, period_type, period_value, date_from, date_to } = body;
-      const records = await base44.asServiceRole.entities.BookKeeperSession.filter({ id: session_id });
-      if (!records?.length) return Response.json({ error: 'Session not found' }, { status: 404 });
-      const rec = records[0];
+      const allRecs = await base44.asServiceRole.entities.BookKeeperSession.list();
+      const rec = allRecs.find(r => r.id === session_id);
+      if (!rec) return Response.json({ error: 'Session not found' }, { status: 404 });
 
       let allTxs = JSON.parse(rec.transactions_reviewed || rec.transactions_raw || '[]');
       const fileMetadata = JSON.parse(rec.file_metadata || '[]');
